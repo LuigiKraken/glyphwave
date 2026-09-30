@@ -1,7 +1,7 @@
 //! Session-bus watcher: the now-playing track from any MPRIS player (Spotify
-//! preferred, then whatever is playing), and — in screensaver mode — whether the
-//! KDE locker has taken over. Re-read only when a player or the locker signals a
-//! change, so an idle bus costs no wakeups.
+//! preferred, then whatever is playing, then whichever played last), and — in
+//! screensaver mode — whether the KDE locker has taken over. Re-read only when
+//! a player or the locker signals a change, so an idle bus costs no wakeups.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -88,7 +88,9 @@ fn player_proxy<'a>(conn: &'a Connection, name: &'a str) -> Option<Proxy<'a>> {
         .ok()
 }
 
-fn pick_player(conn: &Connection) -> Option<String> {
+/// `last` is the player most recently seen playing, so after a pause the
+/// controls stay on it instead of jumping back to Spotify.
+fn pick_player(conn: &Connection, last: &mut Option<String>) -> Option<String> {
     let names = DBusProxy::new(conn).ok()?.list_names().ok()?;
     let players: Vec<String> = names
         .iter()
@@ -101,17 +103,18 @@ fn pick_player(conn: &Connection) -> Option<String> {
             .unwrap_or_default()
     };
     let playing: Vec<&String> = players.iter().filter(|p| status(p) == "Playing").collect();
-    if let Some(p) = playing.iter().find(|p| p.contains("spotify")) {
+    if let Some(p) = playing.iter().find(|p| p.contains("spotify")).or(playing.first()) {
+        *last = Some(p.to_string());
         return Some(p.to_string());
     }
-    if let Some(p) = playing.first() {
-        return Some(p.to_string());
+    if let Some(p) = last.as_ref().filter(|l| players.contains(l)) {
+        return Some(p.clone());
     }
     players.iter().find(|p| p.contains("spotify")).or(players.first()).cloned()
 }
 
-fn poll(conn: &Connection, track: &Mutex<Track>) {
-    let Some(name) = pick_player(conn) else {
+fn poll(conn: &Connection, track: &Mutex<Track>, last: &mut Option<String>) {
+    let Some(name) = pick_player(conn, last) else {
         *track.lock().unwrap() = Track::default();
         return;
     };
@@ -197,8 +200,9 @@ impl Watcher {
             // recheck covers a player that forgets to announce something.
             let every = Duration::from_secs(if subscribed { 30 } else { 1 });
             let (t, l) = (track.clone(), locked.clone());
+            let mut last = None;
             std::thread::spawn(move || loop {
-                poll(&conn, &t);
+                poll(&conn, &t, &mut last);
                 if watch_locker && locker_active(&conn) {
                     l.store(true, Ordering::Relaxed);
                 }
