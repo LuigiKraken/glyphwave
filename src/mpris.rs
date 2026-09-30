@@ -1,6 +1,6 @@
 //! Session-bus watcher: the now-playing track from any MPRIS player (Spotify
 //! preferred, then whatever is playing, then whichever played last), and — in
-//! screensaver mode — whether the KDE locker has taken over. Re-read only when
+//! screensaver mode — whether a bus locker (KDE, GNOME) has taken over. Re-read only when
 //! a player or the locker signals a change, so an idle bus costs no wakeups.
 
 use std::collections::HashMap;
@@ -134,17 +134,21 @@ fn poll(conn: &Connection, track: &Mutex<Track>, last: &mut Option<String>) {
     t.at = Some(Instant::now());
 }
 
+/// The lockers that answer GetActive: KDE's, then GNOME's. Wayland lockers
+/// like hyprlock and swaylock aren't on the bus; their launcher recipes stop
+/// glyphwave before locking instead.
+const LOCKERS: [(&str, &str); 2] = [
+    ("org.freedesktop.ScreenSaver", "/ScreenSaver"),
+    ("org.gnome.ScreenSaver", "/org/gnome/ScreenSaver"),
+];
+
 fn locker_active(conn: &Connection) -> bool {
-    conn.call_method(
-        Some("org.freedesktop.ScreenSaver"),
-        "/ScreenSaver",
-        Some("org.freedesktop.ScreenSaver"),
-        "GetActive",
-        &(),
-    )
-    .ok()
-    .and_then(|m| m.body().deserialize::<bool>().ok())
-    .unwrap_or(false)
+    LOCKERS.iter().any(|&(name, path)| {
+        conn.call_method(Some(name), path, Some(name), "GetActive", &())
+            .ok()
+            .and_then(|m| m.body().deserialize::<bool>().ok())
+            .unwrap_or(false)
+    })
 }
 
 /// Ask the bus for the signals that mean "re-read": a player's properties or
@@ -165,7 +169,9 @@ fn subscribe(conn: &Connection, watch_locker: bool) -> zbus::Result<()> {
             .build(),
     )?;
     if watch_locker {
-        bus.add_match_rule(sig().interface("org.freedesktop.ScreenSaver")?.member("ActiveChanged")?.build())?;
+        for (name, _) in LOCKERS {
+            bus.add_match_rule(sig().interface(name)?.member("ActiveChanged")?.build())?;
+        }
     }
     Ok(())
 }

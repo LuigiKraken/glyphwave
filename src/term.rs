@@ -128,6 +128,19 @@ fn fkey_len(b: &[u8]) -> Option<usize> {
     }
 }
 
+/// Whether the terminal takes 24-bit colour. Most say so in COLORTERM; a few
+/// only in TERM. Anything else (tmux without it passed through, urxvt, the
+/// Linux console) gets the 256-colour palette.
+pub fn truecolor() -> bool {
+    let ct = std::env::var("COLORTERM").unwrap_or_default();
+    if matches!(ct.as_str(), "truecolor" | "24bit") {
+        return true;
+    }
+    let t = std::env::var("TERM").unwrap_or_default();
+    t.ends_with("-direct")
+        || ["xterm-kitty", "alacritty", "foot", "wezterm", "xterm-ghostty", "contour"].iter().any(|p| t.starts_with(p))
+}
+
 pub fn stdin_is_tty() -> bool {
     unsafe { libc::isatty(STDIN) == 1 }
 }

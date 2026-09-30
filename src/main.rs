@@ -24,10 +24,11 @@ glyphwave — terminal screensaver + music visualizer
 USAGE: glyphwave [options]
 
   --screensaver     exit on mouse motion, on any key but F1–F12 and the
-                    music keys, or when the KDE locker takes over (idle launcher)
+                    music keys, or when the KDE/GNOME locker takes over
   --demo            play a built-in synthetic track instead of the sound card
   --idle            never use the music themes
   --fps N           frame rate (default 30)
+  --colors MODE     truecolor or 256 (default: from COLORTERM / TERM)
   --banner FILE     banner text (default ~/.local/share/kde-screensaver/screensaver.txt)
   --frames N        exit after N frames (testing)
   --size WxH        render size when stdout isn't a terminal (testing)
@@ -56,6 +57,7 @@ struct Opts {
     debug: bool,
     trace: bool,
     theme: Option<String>,
+    truecolor: bool,
 }
 
 fn opts() -> Opts {
@@ -72,6 +74,7 @@ fn opts() -> Opts {
         debug: false,
         trace: false,
         theme: None,
+        truecolor: term::truecolor(),
     };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -83,6 +86,14 @@ fn opts() -> Opts {
             "--debug" => o.debug = true,
             "--trace" => o.trace = true,
             "--theme" => o.theme = args.next(),
+            "--colors" => match args.next().as_deref() {
+                Some("truecolor" | "24bit") => o.truecolor = true,
+                Some("256") => o.truecolor = false,
+                v => {
+                    eprintln!("glyphwave: --colors takes truecolor or 256, not {}", v.unwrap_or("nothing"));
+                    std::process::exit(2);
+                }
+            },
             "--fps" => o.fps = args.next().and_then(|v| v.parse().ok()).unwrap_or(30.0f32).clamp(5.0, 240.0),
             "--banner" => o.banner = args.next().unwrap_or_default(),
             "--frames" => o.frames = args.next().and_then(|v| v.parse().ok()),
@@ -141,7 +152,7 @@ fn main() {
     }
 
     let (mut w, mut h) = o.size.unwrap_or_else(term::size);
-    let mut cv = Canvas::new(w, h);
+    let mut cv = Canvas::new(w, h, o.truecolor);
     let palette = fallback_palette();
     let grad = Gradient::looping(&palette);
 
@@ -221,7 +232,7 @@ fn main() {
             let (nw, nh) = term::size();
             if (nw, nh) != (w, h) || frames == 0 {
                 (w, h) = (nw, nh);
-                cv = Canvas::new(w, h);
+                cv = Canvas::new(w, h, o.truecolor);
             }
             cv.force_full();
         }
@@ -339,6 +350,12 @@ fn main() {
     }
     cap.stop();
     term.restore();
+    if cap.missing {
+        eprintln!(
+            "glyphwave: parec not found, so no music visuals. It comes with pulseaudio-utils \
+             (Debian, Ubuntu, Fedora) or libpulse (Arch) and works with PipeWire's pulse layer."
+        );
+    }
     if o.stats {
         eprintln!(
             "glyphwave: {frames} frames, {:.2} ms/frame busy, {} bytes/frame, {:.1} s",

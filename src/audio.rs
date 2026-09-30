@@ -39,12 +39,14 @@ pub struct Capture {
     child: Option<Child>,
     /// When a failed or dead `parec` may be tried again.
     retry: Option<Instant>,
+    /// `parec` isn't installed; said once on exit.
+    pub missing: bool,
     pub ring: Arc<Mutex<Ring>>,
 }
 
 impl Capture {
     pub fn new() -> Capture {
-        Capture { child: None, retry: None, ring: Arc::new(Mutex::new(Ring::new())) }
+        Capture { child: None, retry: None, missing: false, ring: Arc::new(Mutex::new(Ring::new())) }
     }
 
     pub fn running(&mut self) -> bool {
@@ -76,7 +78,13 @@ impl Capture {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn();
-        let Ok(mut child) = child else { return };
+        let mut child = match child {
+            Ok(c) => c,
+            Err(e) => {
+                self.missing |= e.kind() == std::io::ErrorKind::NotFound;
+                return;
+            }
+        };
         let mut out = child.stdout.take().unwrap();
         let ring = self.ring.clone();
         std::thread::spawn(move || {

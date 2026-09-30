@@ -89,10 +89,54 @@ Keys (interactive): `q` quit, `space` play/pause, `n`/`p` next/previous,
 waking it (the numpad keys send the same bytes). Mouse motion and every other
 key wake the screensaver, except F1–F12, where laptop media keys sit.
 
-Options: `--fps N` (default 30), `--banner FILE`, `--idle`,
+Options: `--fps N` (default 30), `--banner FILE`, `--idle`, `--colors truecolor|256`,
 `--theme fire` (always use one theme; `--help` lists them),
 `--debug`, `--trace` (beat/onset/drop events to stderr), and for testing
 `--frames N`, `--size WxH` and `--stats`.
+
+## Other systems
+
+glyphwave runs anywhere on Linux with:
+
+- a **terminal**. 24-bit colour is used when `COLORTERM` or `TERM` says the
+  terminal has it (kitty, foot, alacritty, ghostty, wezterm, Konsole, GNOME
+  Terminal). Everything else (tmux without truecolor passed through, urxvt,
+  xterm, the Linux console) gets the nearest xterm-256 colours. `--colors`
+  overrides the guess. The font needs braille and katakana, which most desktop
+  fonts have. Terminals without synchronized output may tear a little.
+- **`parec`** for the music visuals. It works on PipeWire (through its pulse
+  layer) as well as PulseAudio, and comes in `pulseaudio-utils` on Debian,
+  Ubuntu and Fedora, or `libpulse` on Arch. Without it only the idle banner
+  runs, and glyphwave says why on exit.
+- a **D-Bus session bus** for the player (MPRIS). Every desktop has one.
+
+It needs Rust 1.85 or later to build (use rustup where the distro's `rustc` is
+older). A static build runs on any x86-64 distro as is:
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --target x86_64-unknown-linux-musl
+# target/x86_64-unknown-linux-musl/release/glyphwave
+```
+
+### Starting it when idle
+
+`contrib/glyphwave-idle` opens glyphwave fullscreen in the first terminal it
+finds (or `$GLYPHWAVE_TERM`), once, and never over a lock screen.
+`glyphwave-idle --stop` closes it. Put it on `$PATH` next to glyphwave and hook
+it to your idle daemon:
+
+| Desktop | Recipe |
+|---|---|
+| Hyprland | `contrib/hypridle.conf` |
+| sway, other wlroots compositors | `contrib/sway.conf` (swayidle) |
+| X11 window managers | `contrib/xidlehook.sh` |
+| KDE Plasma | `contrib/kde/README.md` (PowerDevil) |
+
+In `--screensaver` mode glyphwave exits on its own when the KDE or GNOME
+locker comes up. hyprlock, swaylock and i3lock aren't on the bus, so the
+recipes run `glyphwave-idle --stop` before locking. GNOME has no idle hook for
+running a command, so it has no recipe.
 
 ## How it works
 
@@ -100,7 +144,7 @@ Options: `--fps N` (default 30), `--banner FILE`, `--idle`,
 |---|---|
 | `audio.rs` | `parec` from `@DEFAULT_MONITOR@`, float32 stereo at 48 kHz, into a ring buffer; plus the synthetic demo track |
 | `dsp.rs` | spectrum, onsets, tempo, beat phase, loudness, drop and section detection |
-| `mpris.rs` | now playing (zbus), plus the KDE locker check in screensaver mode; re-read only on bus signals |
+| `mpris.rs` | now playing (zbus), plus the KDE/GNOME locker check in screensaver mode; re-read only on bus signals |
 | `canvas.rs` | cell buffer with half-block pixels and braille dots; the diffed output |
 | `fx/*` | banner cycle, text effects, music themes, bar floor, music ribbon, idle stars / rain, player label |
 | `scene.rs` | picks each cycle's theme and says when its hold ends |

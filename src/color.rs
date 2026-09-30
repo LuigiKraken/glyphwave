@@ -23,6 +23,41 @@ impl Rgb {
         )
     }
 
+    /// Nearest entry of the xterm 256-colour palette: the 6×6×6 cube or the
+    /// 24-step grey ramp, whichever is closer. For terminals without truecolor.
+    pub fn xterm256(self) -> u8 {
+        const LEVELS: [i32; 6] = [0, 95, 135, 175, 215, 255];
+        let near = |v: u8| {
+            let v = v as i32;
+            (0..6).min_by_key(|&i| (LEVELS[i] - v).abs()).unwrap()
+        };
+        let d = |a: (i32, i32, i32)| {
+            let (r, g, b) = (self.0 as i32 - a.0, self.1 as i32 - a.1, self.2 as i32 - a.2);
+            r * r + g * g + b * b
+        };
+        let (r, g, b) = (near(self.0), near(self.1), near(self.2));
+        let cube = 16 + 36 * r + 6 * g + b;
+        let avg = (self.0 as i32 + self.1 as i32 + self.2 as i32) / 3;
+        let grey = ((avg - 3) / 10).clamp(0, 23);
+        let gv = 8 + 10 * grey;
+        if d((gv, gv, gv)) < d((LEVELS[r], LEVELS[g], LEVELS[b])) { 232 + grey as u8 } else { cube as u8 }
+    }
+
+    /// The colour a 256-colour terminal will actually show for this one.
+    pub fn snap256(self) -> Rgb {
+        const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+        match self.xterm256() {
+            n @ 232.. => {
+                let v = 8 + 10 * (n - 232);
+                Rgb(v, v, v)
+            }
+            n => {
+                let n = n - 16;
+                Rgb(LEVELS[(n / 36) as usize], LEVELS[(n / 6 % 6) as usize], LEVELS[(n % 6) as usize])
+            }
+        }
+    }
+
     /// Straight RGB lerp: cheap, fine for short hops like fading to white.
     pub fn mix(self, o: Rgb, t: f32) -> Rgb {
         let t = t.clamp(0.0, 1.0);
@@ -176,4 +211,21 @@ pub fn saturate(stops: &[Rgb]) -> Vec<Rgb> {
             Lab { l: p.l.max(0.6), a: p.a / ch * want, b: p.b / ch * want }.to_rgb()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Rgb;
+
+    #[test]
+    fn xterm256_picks_cube_or_grey() {
+        assert_eq!(Rgb(0, 0, 0).xterm256(), 16);
+        assert_eq!(Rgb(255, 255, 255).xterm256(), 231);
+        assert_eq!(Rgb(255, 0, 0).xterm256(), 196);
+        assert_eq!(Rgb(0, 255, 255).xterm256(), 51);
+        assert_eq!(Rgb(128, 128, 128).xterm256(), 244);
+        for c in [Rgb(12, 200, 90), Rgb(90, 20, 160), Rgb(40, 40, 44), Rgb(255, 128, 0)] {
+            assert_eq!(c.snap256().xterm256(), c.xterm256(), "{c:?} snaps to its own entry");
+        }
+    }
 }

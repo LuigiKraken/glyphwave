@@ -21,6 +21,8 @@ pub struct Canvas {
     pub cells: Vec<Cell>,
     front: Vec<Cell>,
     full: bool,
+    /// 24-bit colour codes; otherwise the nearest of the xterm 256.
+    truecolor: bool,
     out: String,
     /// Sub-cell braille dots, 2×4 per cell; bit layout per Unicode braille.
     dots: Vec<u8>,
@@ -51,13 +53,14 @@ fn close_by(a: Rgb, b: Rgb, t: i32) -> bool {
 const BRAILLE_BITS: [[u8; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
 
 impl Canvas {
-    pub fn new(w: usize, h: usize) -> Canvas {
+    pub fn new(w: usize, h: usize, truecolor: bool) -> Canvas {
         Canvas {
             w,
             h,
             cells: vec![BLANK; w * h],
             front: vec![BLANK; w * h],
             full: true,
+            truecolor,
             out: String::with_capacity(1 << 16),
             dots: vec![0; w * h],
             dot_col: vec![BLACK; w * h],
@@ -217,7 +220,7 @@ impl Canvas {
         out.push_str("\x1b[?2026h");
         if self.full {
             // erase to explicit black: the terminal's default background may be grey
-            out.push_str("\x1b[0m\x1b[48;2;0;0;0m\x1b[2J");
+            out.push_str(if self.truecolor { "\x1b[0m\x1b[48;2;0;0;0m\x1b[2J" } else { "\x1b[0m\x1b[48;5;16m\x1b[2J" });
         }
         let (mut cur_fg, mut cur_bg): (Option<Rgb>, Option<Rgb>) = (None, self.full.then_some(BLACK));
         let mut cursor: Option<(usize, usize)> = None;
@@ -225,6 +228,11 @@ impl Canvas {
             for x in 0..self.w {
                 let i = y * self.w + x;
                 let mut c = self.cells[i];
+                if !self.truecolor {
+                    // diff what the terminal will show, so drift inside one
+                    // palette entry sends nothing
+                    (c.fg, c.bg) = (c.fg.snap256(), c.bg.snap256());
+                }
                 if c.fg.is_black() && c.ch != ' ' && c.bg.is_black() {
                     c.ch = ' '; // an invisible glyph is a blank; saves bytes
                 }
@@ -245,14 +253,22 @@ impl Canvas {
                 if need_bg || need_fg {
                     out.push_str("\x1b[");
                     if need_fg {
-                        let _ = write!(out, "38;2;{};{};{}", c.fg.0, c.fg.1, c.fg.2);
+                        if self.truecolor {
+                            let _ = write!(out, "38;2;{};{};{}", c.fg.0, c.fg.1, c.fg.2);
+                        } else {
+                            let _ = write!(out, "38;5;{}", c.fg.xterm256());
+                        }
                         cur_fg = Some(c.fg);
                     }
                     if need_bg {
                         if need_fg {
                             out.push(';');
                         }
-                        let _ = write!(out, "48;2;{};{};{}", c.bg.0, c.bg.1, c.bg.2);
+                        if self.truecolor {
+                            let _ = write!(out, "48;2;{};{};{}", c.bg.0, c.bg.1, c.bg.2);
+                        } else {
+                            let _ = write!(out, "48;5;{}", c.bg.xterm256());
+                        }
                         cur_bg = Some(c.bg);
                     }
                     out.push('m');
