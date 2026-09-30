@@ -153,7 +153,23 @@ released yet. Planned before the first release:
   or Slack call, and further keys fake mute, pause and a quiet or loud track.
 - **Download and run.** One self-contained Linux binary, built for each
   release, so nobody needs Rust. It will be tested in the common terminals
-  and desktops.
+  and desktops, and on the common distros, Fedora (GNOME and KDE) included.
+- **`glyphwave setup`.** One step after installing, which asks:
+  - after how many idle minutes the screensaver starts;
+  - what happens after it has run a while: lock, screen off, sleep, or keep
+    running;
+  - whether it runs only when plugged in, or on battery too;
+  - which banner to use.
+
+  It uses your desktop's own idle settings (KDE, GNOME, Hyprland, sway, X11)
+  rather than running its own timer. It never needs root and never
+  installs packages. It only writes to your home folder, shows every file
+  before changing it, and `glyphwave setup --remove` puts everything back.
+  Anything a distro still needs is listed here, per distro.
+- **One config file.** Setup saves its answers to
+  `~/.config/glyphwave/config`. The top holds the general settings everyone
+  needs. Below it are optional sections for the detail, such as which
+  terminal to use or different settings per desktop or for battery.
 - **A recording at the top of this README,** so you can see it move before
   reading anything.
 
