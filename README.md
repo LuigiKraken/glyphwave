@@ -29,7 +29,8 @@ between.
     split the banner into magenta and cyan ghosts.
   - `springs`: every letter hangs on a spring. Kicks push them and the bass
     bends the banner.
-  - `floor`: the banner holds still over a cava bar floor.
+  - `floor`: the banner holds still over a cava bar floor. It replaces the
+    ribbon, so it isn't in the rotation; `--theme floor` runs it.
   - `bounce`: the whole banner flies around the screen, faster with the
     music, with kicks swerving it and a dim trail behind. Each wall it hits
     jumps the palette.
@@ -57,8 +58,10 @@ between.
     next intro straight away, with a calmer pick. A high (a drop, or a surge
     in level on a kick) cuts: the next, busier theme takes over at once
     under a flash, with no outro or intro. A theme that moves the letters
-    (`bounce`, `springs`, `glitch`) first brings them back home, so neither
-    kind of switch jumps. A section change cuts when the
+    (`bounce`, `springs`, `glitch`) first brings them back home, and one
+    with its own layer (`matrix` rain, `fire`, `warp` stars, `shock` rings,
+    `wave`) stops adding to it and fades it out, so neither kind of switch
+    jumps. A section change cuts when the
     music is busy and otherwise waits for a lull. The 16/32-bar timer only
     marks a hold as due.
 

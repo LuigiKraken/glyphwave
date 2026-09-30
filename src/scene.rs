@@ -83,7 +83,7 @@ impl Director {
     /// Always use one theme (testing, taste).
     pub fn lock(&mut self, name: &str) -> Result<(), String> {
         let t = Theme::from_name(name)
-            .ok_or_else(|| format!("unknown theme {name}; themes: {}", ALL.iter().map(|t| t.name()).collect::<Vec<_>>().join(" ")))?;
+            .ok_or_else(|| format!("unknown theme {name}; themes: {}", ALL.iter().map(|t| t.name()).collect::<Vec<_>>().join(" ") + " floor"))?;
         self.locked = Some(t);
         Ok(())
     }

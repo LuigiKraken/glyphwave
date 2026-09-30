@@ -21,7 +21,8 @@
 //! * glitch:  hi-hats scramble letters, snares tear rows sideways, kicks split
 //!   the banner into magenta / cyan ghosts.
 //! * springs: every letter on a damped spring; kicks push, the bass bends.
-//! * floor:   the banner steady over a cava bar floor.
+//! * floor:   the banner steady over a cava bar floor (only with --theme:
+//!   it replaces the ribbon, and that swap doesn't transition well).
 //! * bounce:  the whole banner flies around the screen, faster with the
 //!   music, kicks swerving it, a rainbow trail behind it; every wall it hits
 //!   jumps the palette.
@@ -30,6 +31,9 @@
 //!
 //! Colours come from the shared `Look` (the letters' `fin` is refreshed from
 //! it every frame), so the theme's accents and the ribbon always match.
+//!
+//! Before a switch, a theme winds its own layer down (no new rain, fire,
+//! stars or rings; what's there fades) and brings moved letters home.
 //!
 //! Every theme blends toward the plain banner as `react` falls to 0, so the
 //! intro hands over and the outro takes over without a jump.
@@ -56,7 +60,9 @@ pub enum Theme {
     Warp,
 }
 
-pub const ALL: [Theme; 11] = [
+/// The rotation. `floor` swaps the ribbon for its own bars, so it only runs
+/// when asked for (`--theme floor`).
+pub const ALL: [Theme; 10] = [
     Theme::Levels,
     Theme::Pulse,
     Theme::Shock,
@@ -65,7 +71,6 @@ pub const ALL: [Theme; 11] = [
     Theme::Matrix,
     Theme::Glitch,
     Theme::Springs,
-    Theme::Floor,
     Theme::Bounce,
     Theme::Warp,
 ];
@@ -84,7 +89,7 @@ impl Theme {
     }
 
     pub fn from_name(s: &str) -> Option<Theme> {
-        ALL.iter().copied().find(|t| t.name().eq_ignore_ascii_case(s))
+        ALL.iter().chain(&[Theme::Floor]).copied().find(|t| t.name().eq_ignore_ascii_case(s))
     }
 
     /// Intros that set the theme up.
@@ -141,6 +146,9 @@ impl Theme {
     }
 }
 
+/// How long a theme's own layer takes to wind down before a switch.
+const WIND_DOWN: f32 = 0.9;
+
 /// Where the banner sits.
 #[derive(Clone, Copy)]
 pub struct Geom {
@@ -169,8 +177,10 @@ struct Drop {
 /// Per-theme state for one hold; rebuilt when a theme starts.
 pub struct Hold {
     pub theme: Theme,
-    /// A switch is waiting: stop moving the letters and bring them home.
+    /// A switch is waiting: stop moving the letters and bring them home,
+    /// and wind the theme's own layer (rain, fire, stars…) down to nothing.
     pub homing: bool,
+    wind: f32,
     rng: Rng,
     t: f32,
     flash: f32,
@@ -238,6 +248,7 @@ impl Hold {
         Hold {
             theme,
             homing: false,
+            wind: 1.0,
             rng: Rng::seeded(),
             t: 0.0,
             flash: 0.0,
@@ -270,7 +281,10 @@ impl Hold {
     pub fn draw(&mut self, cv: &mut Canvas, cx: &Ctx, chars: &mut [Ch], g: Geom, spec: &mut Spectrum, react: f32, look: &mut Look) {
         let f = cx.f;
         self.t += cx.dt;
-        if f.drop {
+        if self.homing {
+            self.wind = (self.wind - cx.dt / WIND_DOWN).max(0.0);
+        }
+        if f.drop && !self.homing {
             self.flash = 1.0;
         }
         self.flash *= (-cx.dt / 0.3).exp();
@@ -292,6 +306,10 @@ impl Hold {
     /// True once every letter is back at its home cell, so a switch won't
     /// make the banner jump.
     pub fn at_home(&self, chars: &[Ch]) -> bool {
+        let layered = matches!(self.theme, Theme::Shock | Theme::Wave | Theme::Fire | Theme::Matrix | Theme::Warp | Theme::Floor);
+        if layered && self.wind > 0.0 {
+            return false;
+        }
         match self.theme {
             Theme::Bounce => self.off == (0.0, 0.0),
             Theme::Springs => chars.iter().all(|c| {
@@ -386,16 +404,17 @@ impl Hold {
         let f = cx.f;
         let centre = (g.ox as f32 + g.bw as f32 / 2.0, g.oy as f32 + g.bh as f32 / 2.0);
         let maxr = (cx.w as f32).hypot(cx.h as f32 * 2.0) * 0.55;
+        let layer = react * self.wind;
         self.since_kick += cx.dt;
-        if f.kick > 0.25 && self.since_kick > 0.18 && react > 0.5 {
+        if f.kick > 0.25 && self.since_kick > 0.18 && layer > 0.5 {
             self.rings.push((0.0, f.kick.min(1.5)));
             self.since_kick = 0.0;
         }
-        if f.drop {
+        if f.drop && !self.homing {
             self.rings.push((0.0, 2.5));
             self.rings.push((-0.12, 2.0));
         }
-        if f.snare > 0.4 && self.beams.len() < 3 && react > 0.5 {
+        if f.snare > 0.4 && self.beams.len() < 3 && layer > 0.5 {
             let row = g.oy + self.rng.below(g.bh) as i32;
             self.beams.push((row, 0.0, self.rng.chance(0.5)));
         }
@@ -413,7 +432,7 @@ impl Hold {
             let r = age * speed;
             let life = 1.0 - r / maxr;
             let ch = if life > 0.75 { '•' } else if life > 0.4 { '∙' } else { '·' };
-            let col = look.at(0.35 + 0.65 * life).mix(WHITE, 0.3 * life).scale((0.3 + 0.7 * life) * s.min(1.0) * react);
+            let col = look.at(0.35 + 0.65 * life).mix(WHITE, 0.3 * life).scale((0.3 + 0.7 * life) * s.min(1.0) * layer);
             let steps = (r * 7.0).max(12.0) as usize;
             for k in 0..steps {
                 let a = k as f32 / steps as f32 * std::f32::consts::TAU;
@@ -429,7 +448,7 @@ impl Hold {
                 let x = if rev { hx + k as f32 } else { hx - k as f32 };
                 let ch = BEAM_TRAIL[(k / 4).min(2)];
                 let fade = 1.0 - k as f32 / 12.0;
-                cv.put(x as i32, row, ch, look.at(fade).mix(WHITE, 0.5 * fade).scale(react));
+                cv.put(x as i32, row, ch, look.at(fade).mix(WHITE, 0.5 * fade).scale(layer));
             }
             lit_rows.push((row, hx, rev));
         }
@@ -489,7 +508,7 @@ impl Hold {
         }
 
         let cy = g.oy as f32 + g.bh as f32 / 2.0;
-        let amp = (g.bh as f32 * 0.5 + 1.5 + 3.5 * f.intensity).min(cy - 1.0).min(h as f32 - cy - 1.0).max(1.0) * react;
+        let amp = (g.bh as f32 * 0.5 + 1.5 + 3.5 * f.intensity).min(cy - 1.0).min(h as f32 - cy - 1.0).max(1.0) * react * self.wind;
         for k in 0..n {
             let (xl, xr) = (k as i32, w - 1 - k as i32);
             for (x, v, depth) in [(xl, self.hist[k].0, xl - left_end), (xr, self.hist[k].1, right_start - xr)] {
@@ -547,7 +566,7 @@ impl Hold {
             self.hw = w;
             self.heat = vec![0.0; w * h];
         }
-        if f.drop {
+        if f.drop && !self.homing {
             self.surge = 1.0;
         }
         self.surge *= (-cx.dt / 1.2).exp();
@@ -566,7 +585,7 @@ impl Hold {
                 let c = &chars[i];
                 let u = c.dx as f32 / g.bw as f32;
                 let band = sample(&f.mono, (u - 0.5).abs() * 2.0); // bass in the middle
-                let src = ((0.55 + 0.9 * band) * (0.75 + 0.5 * f.kick_env) * (1.0 + 1.5 * self.surge) * react).min(1.8);
+                let src = ((0.55 + 0.9 * band) * (0.75 + 0.5 * f.kick_env) * (1.0 + 1.5 * self.surge) * react * self.wind).min(1.8);
                 let (x, y) = (c.home.0 as i32, c.home.1 as i32 - 1);
                 if x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < h {
                     let p = &mut self.heat[y as usize * w + x as usize];
@@ -593,7 +612,7 @@ impl Hold {
                     continue;
                 }
                 let k = ((v.min(1.0) * FLAME.len() as f32) as usize).min(FLAME.len() - 1);
-                cv.put(x as i32, y as i32, FLAME[k], ramp(&FIRE, 0.15 + v.min(1.0) * 0.85));
+                cv.put(x as i32, y as i32, FLAME[k], ramp(&FIRE, 0.15 + v.min(1.0) * 0.85).scale(self.wind.sqrt()));
             }
         }
         for c in chars {
@@ -615,7 +634,8 @@ impl Hold {
         if f.drop {
             spawn += w / 3;
         }
-        if react < 0.5 {
+        let layer = react * self.wind;
+        if layer < 0.5 || self.homing {
             spawn = 0;
         }
         for _ in 0..spawn {
@@ -648,7 +668,7 @@ impl Hold {
                 let fade = 1.0 - k as f32 / d.len as f32;
                 let ch = nth(KATAKANA, hash(d.seed ^ y as u32, if k == 0 { frame } else { frame / 6 }));
                 let col = if k == 0 { hex("dbffdb") } else { ramp(&GREENS, fade) .scale(0.35 + 0.65 * fade) };
-                cv.put(d.x, y, ch, col.scale(react));
+                cv.put(d.x, y, ch, col.scale(layer));
                 let i = y as usize * w + d.x as usize;
                 self.wet[i] = self.wet[i].max(if k == 0 { 1.0 } else { fade * 0.8 });
             }
@@ -760,7 +780,7 @@ impl Hold {
         let f = cx.f;
         let rows = cx.h as i32 - (g.oy + g.bh as i32) - 2;
         if rows >= 3 {
-            spec.floor(cv, cx, rows as usize, react, look);
+            spec.floor(cv, cx, rows as usize, react * self.wind, look);
         }
         self.step_sweep(cx);
         for c in chars {
@@ -862,8 +882,9 @@ impl Hold {
         let (rx, ry) = (g.bw as f32 / 2.0 + 1.0, g.bh as f32 / 2.0 + 1.0);
         let maxr = (w / 2.0).hypot(h);
         // stars leave from the banner's edges
-        self.spawn_acc += cx.dt * (8.0 + 320.0 * f.intensity.powf(1.5)) * (1.0 + 3.0 * f.kick_env.min(1.0)) * react;
-        if f.drop {
+        let layer = react * self.wind;
+        self.spawn_acc += cx.dt * (8.0 + 320.0 * f.intensity.powf(1.5)) * (1.0 + 3.0 * f.kick_env.min(1.0)) * layer;
+        if f.drop && !self.homing {
             self.spawn_acc += 500.0;
         }
         let spawn = self.spawn_acc as usize;
@@ -915,7 +936,7 @@ impl Hold {
                 }
             };
             let near = (dist / maxr).min(1.0);
-            let col = look.at(s.u).scale((0.25 + 0.95 * near).min(1.0) * react).mix(WHITE, 0.4 * near * near);
+            let col = look.at(s.u).scale((0.25 + 0.95 * near).min(1.0) * layer).mix(WHITE, 0.4 * near * near);
             cv.put_under(s.x.round() as i32, s.y.round() as i32, glyph, col);
         }
     }
