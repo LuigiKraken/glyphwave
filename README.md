@@ -1,10 +1,40 @@
 # glyphwave
 
-A terminal screensaver for the Tuxedo, in one small Rust binary. It replaces the
-ttfx + `nowplaying-vis.py` + cava trio that `kde-screensaver-run` used to switch
-between.
+A terminal screensaver that listens to the music.
 
-- **When nothing is playing**, the tuxbook banner cycles through
+## The idea
+
+A laptop screensaver should be something nice to look at, not just a black
+screen. glyphwave puts a text banner in the middle of a fullscreen terminal
+and animates it. When nothing is playing it runs through text effects: the
+letters rain in, burn, decrypt, get pulled into a black hole. When music
+plays, the same banner becomes a visualizer. It follows the beat, the kicks
+and hi-hats, the drops and the quiet sections, and switches between themes
+when the music changes rather than on a timer.
+
+The rules it's built on:
+
+- **Legible first.** It can get loud and colourful when the music does, but
+  the banner always stays readable.
+- **Nothing jumps.** Letters that were moved return home, and theme layers
+  fade out before the next theme starts.
+- **One palette.** The banner, the effects and the ribbon along the bottom
+  always share their colours.
+- **Cheap.** One small binary, well under a millisecond of CPU per frame, and
+  no audio capture unless something is playing. A screensaver shouldn't cost
+  battery.
+- **Plain character cells.** Everything is text in a terminal, with no
+  graphics protocol and no GPU.
+
+It replaced a stack of three separate tools on one KDE laptop:
+[ttfx](https://github.com/omacom/ttfx) for the idle text effects, a Python
+now-playing script, and [cava](https://github.com/karlstav/cava) for the
+bars, with a shell script switching between them. Doing it in one program
+means the text and the music share one screen, one palette and one clock.
+
+## What it does
+
+- **When nothing is playing**, the banner cycles through
   terminaltexteffects-style animations: 16 intros (expand, rain, slide, decrypt,
   beams, burn, waves, fireworks, blackhole, unstable, spray, bouncy balls, print,
   matrix, VHS tape, colour shift). Each is followed by a hold with a specular
@@ -74,69 +104,47 @@ between.
 - Pausing, or 4 s of silence, ends the themed cycle with its outro, and the idle
   cycle takes over.
 
-## Run
+## The stack
 
-```bash
-cargo build --release
-./target/release/glyphwave                # interactive
-./target/release/glyphwave --demo         # built-in 124 BPM test track, no player needed
-./target/release/glyphwave --screensaver  # what the idle launcher runs
-```
+- **Rust**, with four crates:
+  - [`realfft`](https://crates.io/crates/realfft) for the FFTs
+  - [`zbus`](https://crates.io/crates/zbus) for D-Bus: now playing, player
+    controls, lock-screen detection
+  - [`signal-hook`](https://crates.io/crates/signal-hook) for clean exits
+    and resizes
+  - [`libc`](https://crates.io/crates/libc) for the raw terminal
+- **No TUI framework.** glyphwave writes the escape codes itself: a
+  double-buffered cell grid that sends only the cells that changed, inside
+  synchronized-output markers so frames don't tear. 24-bit colour, with a
+  256-colour fallback for terminals without it. Colours are mixed in OKLab
+  so gradients stay even.
+- **Audio** comes from `parec` recording the default output's monitor, so it
+  sees whatever the machine plays. That works on PipeWire and PulseAudio
+  alike.
+- **Now playing** comes from MPRIS on the session bus, which Spotify,
+  browsers and most Linux players speak. Nothing is polled: the bus signals
+  when something changes.
+- **The banner** is any plain-text file. Every non-space character becomes
+  one letter the effects can move and colour.
+- **Starting it** is left to the desktop's idle daemon. `contrib/` has a
+  small launcher and recipes for Hyprland, sway, X11 window managers and
+  KDE.
 
-Keys (interactive): `q` quit, `space` play/pause, `n`/`p` next/previous,
-`v` next theme (or next text effect), `i` toggle idle/music, `d` debug overlay.
-`-`/`+`/`Enter` previous/next/play-pause, also in `--screensaver` without
-waking it (the numpad keys send the same bytes). Mouse motion and every other
-key wake the screensaver, except F1–F12, where laptop media keys sit.
+## Status
 
-Options: `--fps N` (default 30), `--banner FILE`, `--idle`, `--colors truecolor|256`,
-`--theme fire` (always use one theme; `--help` lists them),
-`--debug`, `--trace` (beat/onset/drop events to stderr), and for testing
-`--frames N`, `--size WxH` and `--stats`.
+It runs daily as the screensaver on the laptop it was written for. Not
+released yet. Planned before the first release:
 
-## Other systems
-
-glyphwave runs anywhere on Linux with:
-
-- a **terminal**. 24-bit colour is used when `COLORTERM` or `TERM` says the
-  terminal has it (kitty, foot, alacritty, ghostty, wezterm, Konsole, GNOME
-  Terminal). Everything else (tmux without truecolor passed through, urxvt,
-  xterm, the Linux console) gets the nearest xterm-256 colours. `--colors`
-  overrides the guess. The font needs braille and katakana, which most desktop
-  fonts have. Terminals without synchronized output may tear a little.
-- **`parec`** for the music visuals. It works on PipeWire (through its pulse
-  layer) as well as PulseAudio, and comes in `pulseaudio-utils` on Debian,
-  Ubuntu and Fedora, or `libpulse` on Arch. Without it only the idle banner
-  runs, and glyphwave says why on exit.
-- a **D-Bus session bus** for the player (MPRIS). Every desktop has one.
-
-It needs Rust 1.85 or later to build (use rustup where the distro's `rustc` is
-older). A static build runs on any x86-64 distro as is:
-
-```bash
-rustup target add x86_64-unknown-linux-musl
-cargo build --release --target x86_64-unknown-linux-musl
-# target/x86_64-unknown-linux-musl/release/glyphwave
-```
-
-### Starting it when idle
-
-`contrib/glyphwave-idle` opens glyphwave fullscreen in the first terminal it
-finds (or `$GLYPHWAVE_TERM`), once, and never over a lock screen.
-`glyphwave-idle --stop` closes it. Put it on `$PATH` next to glyphwave and hook
-it to your idle daemon:
-
-| Desktop | Recipe |
-|---|---|
-| Hyprland | `contrib/hypridle.conf` |
-| sway, other wlroots compositors | `contrib/sway.conf` (swayidle) |
-| X11 window managers | `contrib/xidlehook.sh` |
-| KDE Plasma | `contrib/kde/README.md` (PowerDevil) |
-
-In `--screensaver` mode glyphwave exits on its own when the KDE or GNOME
-locker comes up. hyprlock, swaylock and i3lock aren't on the bus, so the
-recipes run `glyphwave-idle --stop` before locking. GNOME has no idle hook for
-running a command, so it has no recipe.
+- **Calls.** When someone calls on Slack, Discord, Teams and similar apps,
+  the screensaver shows who's calling, and you can accept or decline from
+  the keyboard without waking it. A small separate helper watches for the
+  call notifications, and glyphwave only draws them.
+- **Your own logo as the banner.** By default the banner is the logo your
+  fastfetch or neofetch shows, so it matches your system without any setup.
+  A custom text file still works.
+- **Download and run.** One self-contained Linux binary, built for each
+  release, so nobody needs Rust. It will be tested in the common terminals
+  and desktops.
 
 ## How it works
 
@@ -199,10 +207,25 @@ through four themes:
 
 30 fps is the default; Konsole's own redraw cost scales with it.
 
-## Credits
+## Inspiration and credits
 
-The spectrum pipeline follows [cava](https://github.com/karlstav/cava). The text
-effects follow [terminaltexteffects](https://github.com/ChrisBuilds/terminaltexteffects)
-and its Rust port [ttfx](https://github.com/omacom/ttfx). All three are MIT
-licensed; see `NOTICE`. The algorithms were re-implemented here, and no source
-code was copied.
+- **[cava](https://github.com/karlstav/cava)**: the spectrum pipeline (multiple
+  FFT sizes, log-spaced bars, auto-gain, gravity fall) follows it.
+- **[terminaltexteffects](https://github.com/ChrisBuilds/terminaltexteffects)**
+  and its Rust port **[ttfx](https://github.com/omacom/ttfx)**: the text
+  effects, the idea of letters as particles with paths, and the easing
+  curves come from them.
+- **[MilkDrop](https://www.geisswerks.com/milkdrop/) / [projectM](https://github.com/projectM-visualizer/projectm)**:
+  bass, mid and treble measured against their own running average, so a
+  quiet track moves as much as a loud one.
+- **Music research**, collected in `docs/research-brief.md`: SuperFlux onset
+  detection (Böck & Widmer 2013), online peak picking (Böck et al. 2012),
+  tempo from weighted autocorrelation (Ellis 2007), novelty-based section
+  changes (Foote 2000), and the audio/video sync limits of ITU-R BT.1359.
+- **[OKLab](https://bottosson.github.io/posts/oklab/)** (Ottosson 2020) for
+  colour mixing.
+
+cava, terminaltexteffects and ttfx are MIT licensed; see `NOTICE`. The
+algorithms were re-implemented here, and no source code was copied.
+`docs/cava-tte-algorithms.md` holds the constants and effect designs taken
+from their sources.
