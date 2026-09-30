@@ -145,6 +145,10 @@ released yet. Planned before the first release:
 - **Muted counts as paused.** With the output muted or at 0 %, the
   visualizer stops as if the music were paused. Today it keeps dancing,
   because the capture records the sound before the system volume is applied.
+- **A test mode.** One command that runs glyphwave in the current terminal
+  with keys for trying things out: the number keys jump to a theme (with the
+  normal fade between themes), `d`/`t`/`s` fake an incoming Discord, Teams
+  or Slack call, and further keys fake mute, pause and a quiet or loud track.
 - **Download and run.** One self-contained Linux binary, built for each
   release, so nobody needs Rust. It will be tested in the common terminals
   and desktops.
