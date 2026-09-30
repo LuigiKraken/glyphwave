@@ -136,12 +136,15 @@ It runs daily as the screensaver on the laptop it was written for. Not
 released yet. Planned before the first release:
 
 - **Calls.** When someone calls on Slack, Discord, Teams and similar apps,
-  the screensaver shows who's calling, and you can accept or decline from
-  the keyboard without waking it. A small separate helper watches for the
-  call notifications, and glyphwave only draws them.
+  the screensaver shows who's calling, read from the desktop's call
+  notification. You answer in the app itself: while a call rings, every key
+  (the music keys too) and the mouse end the screensaver.
 - **Your own logo as the banner.** By default the banner is the logo your
   fastfetch or neofetch shows, so it matches your system without any setup.
   A custom text file still works.
+- **Muted counts as paused.** With the output muted or at 0 %, the
+  visualizer stops as if the music were paused. Today it keeps dancing,
+  because the capture records the sound before the system volume is applied.
 - **Download and run.** One self-contained Linux binary, built for each
   release, so nobody needs Rust. It will be tested in the common terminals
   and desktops.
