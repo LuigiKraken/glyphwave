@@ -8,7 +8,7 @@ between.
   terminaltexteffects-style animations: 16 intros (expand, rain, slide, decrypt,
   beams, burn, waves, fireworks, blackhole, unstable, spray, bouncy balls, print,
   matrix, VHS tape, colour shift). Each is followed by a hold with a specular
-  sweep and one of 6 outros. A faint aurora or starfield sometimes drifts behind.
+  sweep and one of 6 outros. A faint starfield sometimes drifts behind.
 - **When music plays** (any MPRIS player, Spotify preferred), the same banner
   cycle keeps going, but each cycle gets a theme: a paired intro, its own
   palette, and a hold in which the banner reacts to the music.
@@ -77,7 +77,7 @@ Options: `--fps N` (default 60), `--banner FILE`, `--idle`,
 | `mpris.rs` | now playing (zbus), plus the KDE locker check in screensaver mode |
 | `art.rs` | cover fetch and cache, OKLab k-means palette |
 | `canvas.rs` | cell buffer with half-block pixels and braille dots; the diffed output |
-| `fx/*` | banner cycle, text effects, music themes, bar floor, music ribbon, idle aurora / stars / rain, player label |
+| `fx/*` | banner cycle, text effects, music themes, bar floor, music ribbon, idle stars / rain, player label |
 | `scene.rs` | picks each cycle's theme and says when its hold ends |
 
 ### DSP choices

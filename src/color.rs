@@ -30,13 +30,11 @@ impl Rgb {
         Rgb(l(self.0, o.0), l(self.1, o.1), l(self.2, o.2))
     }
 
-    /// Additive (screen-like, clamped) — light adds up where layers overlap.
-    pub fn add(self, o: Rgb) -> Rgb {
-        Rgb(
-            self.0.saturating_add(o.0),
-            self.1.saturating_add(o.1),
-            self.2.saturating_add(o.2),
-        )
+    /// Intensify by k (0..1): brighter, and towards white near the top.
+    pub fn boost(self, k: f32) -> Rgb {
+        let k = k.clamp(0.0, 1.0);
+        let l = |a: u8| (a as f32 * (1.0 + 1.2 * k)).min(255.0) as u8;
+        Rgb(l(self.0), l(self.1), l(self.2)).mix(WHITE, 0.3 * k)
     }
 
     pub fn max(self, o: Rgb) -> Rgb {

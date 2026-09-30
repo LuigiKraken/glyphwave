@@ -3,7 +3,6 @@
 //! director. Audio mostly drives *forces and rates* (springs, speeds, zoom),
 //! not positions, so motion stays continuous (the Magnetosphere lesson).
 
-pub mod aurora;
 pub mod banner;
 pub mod effects;
 pub mod label;

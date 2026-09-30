@@ -127,7 +127,6 @@ fn main() {
     }
     let mut an = dsp::Analyzer::new();
     let mut spec = fx::spectrum::Spectrum::new();
-    let mut aurora = fx::aurora::Aurora;
     let mut stars = fx::stars::Stars::new();
     let mut rain = fx::rain::Rain::new();
     let mut ribbon = fx::ribbon::Ribbon::new();
@@ -150,7 +149,7 @@ fn main() {
     let mut label_f = Fader::default();
     let mut ribbon_f = Fader::default();
     let mut lift = Fader::default();
-    let mut idle_layers = [Fader::default(); 3]; // aurora, stars, rain
+    let mut idle_layers = [Fader::default(); 2]; // stars, rain
     let mut idle_forced = o.idle;
     let mut debug = o.debug;
     let mut phase = 0.0f32;
@@ -269,10 +268,9 @@ fn main() {
         music.step(dt, if want_music { 1.2 } else { 2.0 });
         let themed = banner.theme().is_some();
         if banner.cycles != idle_cycle {
-            // each new idle effect gets a fresh ambience: aurora, stars, both or none
+            // each new idle effect gets a fresh ambience: stars or none
             idle_cycle = banner.cycles;
-            idle_layers[0].target = if !themed && rng.chance(0.45) { 1.0 } else { 0.0 };
-            idle_layers[1].target = if !themed && rng.chance(0.3) { 1.0 } else { 0.0 };
+            idle_layers[0].target = if !themed && rng.chance(0.3) { 1.0 } else { 0.0 };
         }
         label_f.target = if track.playing() && !idle_forced { 1.0 } else { 0.0 };
         label_f.step(dt, if label_f.target > 0.5 { 1.0 } else { 0.4 });
@@ -283,19 +281,15 @@ fn main() {
 
         // ------------------------------------------------------ compose
         cv.clear();
-        if idle_layers[0].on() {
-            aurora.draw(&mut cv, &cx, idle_layers[0].a());
-        }
-        cv.resolve_pixels();
         for fl in &mut idle_layers {
             fl.step(dt, 2.0);
         }
-        idle_layers[2].target = if banner.wants_rain() { 1.0 } else { 0.0 };
-        if idle_layers[2].on() {
-            rain.draw(&mut cv, &cx, idle_layers[2].a());
-        }
+        idle_layers[1].target = if banner.wants_rain() { 1.0 } else { 0.0 };
         if idle_layers[1].on() {
-            stars.draw(&mut cv, &cx, idle_layers[1].a());
+            rain.draw(&mut cv, &cx, idle_layers[1].a());
+        }
+        if idle_layers[0].on() {
+            stars.draw(&mut cv, &cx, idle_layers[0].a());
         }
         cv.resolve_dots();
         // the music ribbon runs under every phase; the floor theme has its own bars

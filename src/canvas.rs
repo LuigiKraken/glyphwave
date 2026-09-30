@@ -25,24 +25,20 @@ pub struct Canvas {
     /// Sub-cell braille dots, 2×4 per cell; bit layout per Unicode braille.
     dots: Vec<u8>,
     dot_col: Vec<Rgb>,
-    /// Backdrop pixels, w × 2h (square), resolved into half blocks under glyphs.
-    pub px: Vec<Rgb>,
+    /// Cells holding a lit layer (the ribbon): a glyph drawn over one brightens
+    /// it instead of replacing it.
+    lit: Vec<bool>,
 }
 
-/// A cell nothing has drawn a glyph into yet (blank, or a backdrop half block).
+/// A cell nothing has drawn a glyph into yet.
 #[inline]
 pub fn empty(ch: char) -> bool {
-    ch == ' ' || ch == '▀'
-}
-
-#[inline]
-fn avg(a: Rgb, b: Rgb) -> Rgb {
-    Rgb(((a.0 as u16 + b.0 as u16) / 2) as u8, ((a.1 as u16 + b.1 as u16) / 2) as u8, ((a.2 as u16 + b.2 as u16) / 2) as u8)
+    ch == ' '
 }
 
 /// Colour distance below which a cell counts as unchanged. Slow colour drift
-/// would otherwise repaint every lit cell every frame for a 1/255 step. The
-/// backdrop (dim, always moving) gets a coarser threshold than glyphs.
+/// would otherwise repaint every lit cell every frame for a 1/255 step. Blank
+/// cells (only a background colour) get a coarser threshold than glyphs.
 const TOLERANCE: i32 = 3;
 const TOLERANCE_BACKDROP: i32 = 7;
 
@@ -50,12 +46,6 @@ fn close_by(a: Rgb, b: Rgb, t: i32) -> bool {
     (a.0 as i32 - b.0 as i32).abs() <= t
         && (a.1 as i32 - b.1 as i32).abs() <= t
         && (a.2 as i32 - b.2 as i32).abs() <= t
-}
-
-/// Quantise to steps of 4 so neighbouring backdrop cells share SGR codes.
-#[inline]
-fn quant(c: Rgb) -> Rgb {
-    Rgb(c.0 & !3, c.1 & !3, c.2 & !3)
 }
 
 const BRAILLE_BITS: [[u8; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
@@ -71,7 +61,7 @@ impl Canvas {
             out: String::with_capacity(1 << 16),
             dots: vec![0; w * h],
             dot_col: vec![BLACK; w * h],
-            px: vec![BLACK; w * h * 2],
+            lit: vec![false; w * h],
         }
     }
 
@@ -79,35 +69,7 @@ impl Canvas {
         self.cells.fill(BLANK);
         self.dots.fill(0);
         self.dot_col.fill(BLACK);
-        self.px.fill(BLACK);
-    }
-
-    #[inline]
-    pub fn px_add(&mut self, x: i32, py: i32, c: Rgb) {
-        if x >= 0 && py >= 0 && (x as usize) < self.w && (py as usize) < self.h * 2 {
-            let i = py as usize * self.w + x as usize;
-            self.px[i] = self.px[i].add(c);
-        }
-    }
-
-    /// Turn the pixel layer into half-block cells. Call before any glyph layer.
-    pub fn resolve_pixels(&mut self) {
-        for y in 0..self.h {
-            for x in 0..self.w {
-                let (t, b) = (quant(self.px[2 * y * self.w + x]), quant(self.px[(2 * y + 1) * self.w + x]));
-                if t.is_black() && b.is_black() {
-                    continue;
-                }
-                let c = &mut self.cells[y * self.w + x];
-                if close_by(t, b, 4) {
-                    c.bg = avg(t, b); // one colour: a plain background cell is cheaper
-                } else {
-                    c.ch = '▀';
-                    c.fg = t;
-                    c.bg = b;
-                }
-            }
-        }
+        self.lit.fill(false);
     }
 
     #[inline]
@@ -116,17 +78,34 @@ impl Canvas {
             .then(|| y as usize * self.w + x as usize)
     }
 
-    /// Set a glyph and its colour, keeping the background.
+    /// Set a glyph and its colour, keeping the background. Over a lit cell it
+    /// intensifies the glyph already there by the incoming colour's brightness.
     #[inline]
     pub fn put(&mut self, x: i32, y: i32, ch: char, fg: Rgb) {
         if let Some(i) = self.idx(x, y) {
-            let c = &mut self.cells[i];
-            if c.ch == '▀' {
-                c.bg = avg(c.fg, c.bg);
+            if self.lit[i] {
+                let c = &mut self.cells[i];
+                c.fg = c.fg.boost(fg.0.max(fg.1).max(fg.2) as f32 / 255.0);
+                return;
             }
-            c.ch = ch;
-            c.fg = fg;
+            self.put_over(i, ch, fg);
         }
+    }
+
+    /// Put a glyph and mark the cell lit, so later glyphs brighten it.
+    #[inline]
+    pub fn put_lit(&mut self, x: i32, y: i32, ch: char, fg: Rgb) {
+        if let Some(i) = self.idx(x, y) {
+            self.put_over(i, ch, fg);
+            self.lit[i] = true;
+        }
+    }
+
+    #[inline]
+    fn put_over(&mut self, i: usize, ch: char, fg: Rgb) {
+        let c = &mut self.cells[i];
+        c.ch = ch;
+        c.fg = fg;
     }
 
     /// Put only where the cell is still empty (under-layer semantics).
@@ -148,9 +127,13 @@ impl Canvas {
         }
     }
 
+    /// Text replaces whatever is there, lit or not.
     pub fn text(&mut self, x: i32, y: i32, s: &str, fg: Rgb) -> i32 {
         let mut cx = x;
         for ch in s.chars() {
+            if let Some(i) = self.idx(cx, y) {
+                self.lit[i] = false;
+            }
             self.put(cx, y, ch, fg);
             cx += 1;
         }
@@ -199,9 +182,6 @@ impl Canvas {
             let d = self.dots[i];
             if d != 0 && empty(self.cells[i].ch) {
                 let c = &mut self.cells[i];
-                if c.ch == '▀' {
-                    c.bg = avg(c.fg, c.bg);
-                }
                 c.ch = char::from_u32(0x2800 + d as u32).unwrap_or(' ');
                 c.fg = self.dot_col[i];
             }
@@ -220,9 +200,10 @@ impl Canvas {
         out.clear();
         out.push_str("\x1b[?2026h");
         if self.full {
-            out.push_str("\x1b[0m\x1b[2J");
+            // erase to explicit black: the terminal's default background may be grey
+            out.push_str("\x1b[0m\x1b[48;2;0;0;0m\x1b[2J");
         }
-        let (mut cur_fg, mut cur_bg): (Option<Rgb>, Option<Rgb>) = (None, None);
+        let (mut cur_fg, mut cur_bg): (Option<Rgb>, Option<Rgb>) = (None, self.full.then_some(BLACK));
         let mut cursor: Option<(usize, usize)> = None;
         for y in 0..self.h {
             for x in 0..self.w {
@@ -232,15 +213,11 @@ impl Canvas {
                     c.ch = ' '; // an invisible glyph is a blank; saves bytes
                 }
                 let f = self.front[i];
-                let tol = if c.ch == '▀' || c.ch == ' ' { TOLERANCE_BACKDROP } else { TOLERANCE };
+                let tol = if c.ch == ' ' { TOLERANCE_BACKDROP } else { TOLERANCE };
                 let same = c.ch == f.ch
                     && close_by(c.bg, f.bg, tol)
                     && (c.ch == ' ' || close_by(c.fg, f.fg, tol));
                 if same && !self.full {
-                    continue;
-                }
-                if self.full && c == BLANK {
-                    self.front[i] = c;
                     continue;
                 }
                 if cursor != Some((x, y)) {
@@ -259,11 +236,7 @@ impl Canvas {
                         if need_fg {
                             out.push(';');
                         }
-                        if c.bg.is_black() {
-                            out.push_str("49");
-                        } else {
-                            let _ = write!(out, "48;2;{};{};{}", c.bg.0, c.bg.1, c.bg.2);
-                        }
+                        let _ = write!(out, "48;2;{};{};{}", c.bg.0, c.bg.1, c.bg.2);
                         cur_bg = Some(c.bg);
                     }
                     out.push('m');

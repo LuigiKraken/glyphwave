@@ -144,7 +144,7 @@ impl Ribbon {
                 let col = base_col
                     .scale(bright * (0.7 + 0.3 * rise))
                     .mix(WHITE, a * (0.35 * flash * if tip { 1.0 } else { 0.3 } + 0.6 * pl));
-                cv.put(x, base - k as i32, BLOCKS[fill], col);
+                cv.put_lit(x, base - k as i32, BLOCKS[fill], col);
             }
             // reflection: half-cell steps, dim, fading with depth
             let rh = hs.div_ceil(8); // bar height in cells
@@ -155,7 +155,7 @@ impl Ribbon {
                 }
                 let glyph = if cells >= 1.0 { '█' } else if cells >= 0.5 { '▀' } else { '▔' };
                 let fade = 0.28 * (1.0 - k as f32 / down as f32 * 0.6);
-                cv.put(x, base + 1 + k as i32, glyph, base_col.scale(bright * fade).mix(WHITE, a * 0.15 * pl));
+                cv.put_lit(x, base + 1 + k as i32, glyph, base_col.scale(bright * fade).mix(WHITE, a * 0.15 * pl));
             }
         }
 
