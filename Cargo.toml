@@ -1,0 +1,18 @@
+[package]
+name = "glyphwave"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+libc = "0.2.189"
+realfft = "3.5.0"
+signal-hook = "0.4.4"
+zbus = "5.19.0"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

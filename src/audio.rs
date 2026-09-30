@@ -1,0 +1,194 @@
+//! Audio capture from the default sink's monitor via `parec` (PipeWire's pulse
+//! shim). Float32 stereo at 48 kHz — PipeWire's native rate, so no resampling.
+//! A reader thread keeps the newest samples in a ring; the DSP copies the
+//! window it needs each frame (cava does the same with its input buffer).
+
+use std::io::Read;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+
+pub const RATE: u32 = 48_000;
+pub const RING: usize = 16_384; // per channel, > the largest FFT (8192)
+
+pub struct Ring {
+    pub l: Vec<f32>,
+    pub r: Vec<f32>,
+    pub pos: usize,   // next write index
+    pub total: u64,   // samples ever written (per channel)
+}
+
+impl Ring {
+    fn new() -> Ring {
+        Ring { l: vec![0.0; RING], r: vec![0.0; RING], pos: 0, total: 0 }
+    }
+
+    /// Copy the newest `n` samples (oldest first) into `l`, `r`.
+    pub fn latest(&self, n: usize, l: &mut [f32], r: &mut [f32]) {
+        let n = n.min(RING);
+        let start = (self.pos + RING - n) % RING;
+        for i in 0..n {
+            let j = (start + i) % RING;
+            l[i] = self.l[j];
+            r[i] = self.r[j];
+        }
+    }
+}
+
+pub struct Capture {
+    child: Option<Child>,
+    pub ring: Arc<Mutex<Ring>>,
+}
+
+impl Capture {
+    pub fn new() -> Capture {
+        Capture { child: None, ring: Arc::new(Mutex::new(Ring::new())) }
+    }
+
+    pub fn running(&mut self) -> bool {
+        match &mut self.child {
+            Some(c) => matches!(c.try_wait(), Ok(None)),
+            None => false,
+        }
+    }
+
+    pub fn start(&mut self) {
+        if self.running() {
+            return;
+        }
+        self.stop();
+        let child = Command::new("parec")
+            .args([
+                "-d",
+                "@DEFAULT_MONITOR@",
+                "--format=float32le",
+                &format!("--rate={RATE}"),
+                "--channels=2",
+                "--latency-msec=15",
+                "--raw",
+                "--client-name=glyphwave",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn();
+        let Ok(mut child) = child else { return };
+        let mut out = child.stdout.take().unwrap();
+        let ring = self.ring.clone();
+        std::thread::spawn(move || {
+            let mut buf = vec![0u8; 4096];
+            let mut carry: Vec<u8> = Vec::with_capacity(8);
+            loop {
+                let n = match out.read(&mut buf) {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => n,
+                };
+                carry.extend_from_slice(&buf[..n]);
+                let frames = carry.len() / 8;
+                let mut g = ring.lock().unwrap();
+                for f in 0..frames {
+                    let b = &carry[f * 8..f * 8 + 8];
+                    let l = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+                    let r = f32::from_le_bytes([b[4], b[5], b[6], b[7]]);
+                    let p = g.pos;
+                    g.l[p] = l;
+                    g.r[p] = r;
+                    g.pos = (p + 1) % RING;
+                }
+                g.total += frames as u64;
+                drop(g);
+                carry.drain(..frames * 8);
+            }
+        });
+        self.child = Some(child);
+    }
+
+    pub fn stop(&mut self) {
+        if let Some(mut c) = self.child.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        let mut g = self.ring.lock().unwrap();
+        g.l.fill(0.0);
+        g.r.fill(0.0);
+    }
+}
+
+impl Drop for Capture {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// A synthetic 124 BPM track (kick, off-beat hats, snare on 2/4, bass, pad,
+/// with a breakdown and a drop every 32 bars) written into the ring in real
+/// time. For `--demo` and for testing without a player.
+pub fn start_synth(ring: Arc<Mutex<Ring>>) {
+    std::thread::spawn(move || {
+        let sr = RATE as f32;
+        let bpm = 124.0f32;
+        let beat = 60.0 / bpm;
+        let mut t = 0.0f64;
+        let mut seed = 0x1234_5678u32;
+        let mut noise = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed as f32 / u32::MAX as f32 * 2.0 - 1.0
+        };
+        let chunk = 480;
+        let start = std::time::Instant::now();
+        let mut written = 0u64;
+        let notes = [55.0f32, 55.0, 65.41, 49.0]; // A1 A1 C2 G1, one per bar
+        let mut lp = 0.0f32;
+        loop {
+            let mut g = ring.lock().unwrap();
+            for _ in 0..chunk {
+                let tt = t as f32;
+                let b = tt / beat; // beats elapsed
+                let bar = (b / 4.0) as usize;
+                let section = bar % 32;
+                let breakdown = (24..32).contains(&section);
+                let pb = b.fract() * beat; // seconds since beat
+                let mut s = 0.0f32;
+                if !breakdown {
+                    let f = 45.0 + 120.0 * (-pb * 30.0).exp();
+                    s += 0.9 * (std::f32::consts::TAU * f * pb).sin() * (-pb * 7.0).exp();
+                    let root = notes[bar % 4];
+                    let ph = (tt * root).fract();
+                    s += 0.25 * (ph * 2.0 - 1.0) * (0.6 + 0.4 * (-pb * 4.0).exp());
+                }
+                let off = ((b + 0.5).fract()) * beat;
+                s += 0.18 * noise() * (-off * 40.0).exp() * if breakdown { 0.4 } else { 1.0 };
+                let beat_in_bar = (b as usize) % 4;
+                if !breakdown && (beat_in_bar == 1 || beat_in_bar == 3) {
+                    s += 0.35 * noise() * (-pb * 18.0).exp();
+                    s += 0.3 * (std::f32::consts::TAU * 190.0 * pb).sin() * (-pb * 25.0).exp();
+                }
+                // pad: detuned saws through a lowpass that opens in the breakdown
+                let pad = [220.0f32, 261.6, 329.6]
+                    .iter()
+                    .map(|f| ((tt * f).fract() + (tt * f * 1.003).fract()) - 1.0)
+                    .sum::<f32>();
+                let cut = if breakdown { 0.02 + 0.2 * ((section - 24) as f32 / 8.0 + b.fract() / 32.0) } else { 0.03 };
+                lp += (pad - lp) * cut;
+                s += 0.12 * lp;
+                if breakdown && section >= 30 {
+                    s += 0.15 * noise() * ((section - 30) as f32 * 4.0 + b.fract() * 4.0) / 8.0;
+                }
+                let s = (s * 0.6).tanh() * 0.5;
+                let p = g.pos;
+                g.l[p] = s;
+                g.r[p] = s * 0.9 + 0.05 * noise();
+                g.pos = (p + 1) % RING;
+                t += 1.0 / sr as f64;
+            }
+            g.total += chunk as u64;
+            drop(g);
+            written += chunk as u64;
+            let due = std::time::Duration::from_secs_f64(written as f64 / sr as f64);
+            if let Some(w) = due.checked_sub(start.elapsed()) {
+                std::thread::sleep(w);
+            }
+        }
+    });
+}
