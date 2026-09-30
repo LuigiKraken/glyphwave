@@ -66,6 +66,10 @@ pub struct Banner {
     /// The running cycle's colours, shared with the theme and the ribbon.
     look: Look,
     last_vivid: usize,
+    /// A switch the director called, held until the letters are back home
+    /// (and for how long it has waited).
+    waiting: Option<Cue>,
+    wait_t: f32,
 }
 
 impl Banner {
@@ -118,6 +122,8 @@ impl Banner {
             rng: Rng::seeded(),
             look: Look::new(&crate::color::fallback_palette()),
             last_vivid: usize::MAX,
+            waiting: None,
+            wait_t: 0.0,
         }
     }
 
@@ -239,11 +245,6 @@ impl Banner {
         (&self.look, self.ox, self.bw)
     }
 
-    /// First screen row of the banner.
-    pub fn top(&self) -> i32 {
-        self.oy
-    }
-
     /// True while the matrix intro runs (the rain layer joins in).
     pub fn wants_rain(&self) -> bool {
         matches!(self.phase, Phase::Intro) && self.current == Some(Kind::Matrix)
@@ -345,10 +346,22 @@ impl Banner {
                 Some(_) => {
                     self.react = (self.react + dt / 0.8).min(1.0);
                     dir.update(f, dt);
-                    if !music || dir.cue == Cue::Fade {
-                        self.phase = Phase::Leave(LEAVE);
-                    } else if dir.cue == Cue::Cut {
-                        self.cut(cx, dir);
+                    let cue = if !music { Cue::Fade } else { dir.cue };
+                    if cue != Cue::None && self.waiting.is_none() {
+                        // a theme that moves the letters brings them home first
+                        self.waiting = Some(cue);
+                        self.wait_t = 0.0;
+                        self.hold.homing = true;
+                    }
+                    if let Some(cue) = self.waiting {
+                        self.wait_t += dt;
+                        if self.hold.at_home(&self.chars) || self.wait_t > 3.0 {
+                            self.waiting = None;
+                            match cue {
+                                Cue::Cut => self.cut(cx, dir),
+                                _ => self.phase = Phase::Leave(LEAVE),
+                            }
+                        }
                     }
                 }
             },

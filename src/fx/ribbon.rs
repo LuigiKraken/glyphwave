@@ -12,8 +12,6 @@
 //! kicks, throws hi-hat sparks and sends a pulse outward on each downbeat.
 //! Between holds it lifts a little, to carry the transition. Spikes run into
 //! the headroom under the banner on a soft limit, so they never flat-top.
-//! Once the music is really going, a mirror image grows down from the top
-//! edge too, flipped left for right.
 
 use super::{BLOCKS, Ctx, Look, Rng};
 use crate::canvas::Canvas;
@@ -31,8 +29,6 @@ pub struct Ribbon {
     pulse: f32,
     sparks: Vec<Spark>,
     rng: Rng,
-    /// How far the ceiling mirror is grown in (0..1).
-    mirror: f32,
 }
 
 /// A 0..1 series sampled at u in 0..1 with linear interpolation.
@@ -53,17 +49,15 @@ impl Ribbon {
             pulse: -1.0,
             sparks: Vec::new(),
             rng: Rng::seeded(),
-            mirror: 0.0,
         }
     }
 
-    /// Draw into the bottom `room` rows at opacity `a`, and the mirror into
-    /// the top `ceil` rows; `lift` (0..1) is the extra height and life it
-    /// gets while the banner is between holds. `look` and `span` (left edge,
+    /// Draw into the bottom `room` rows at opacity `a`; `lift` (0..1) is the
+    /// extra height and life it gets while the banner is between holds. `look` and `span` (left edge,
     /// width) are the banner's colours and columns, so the ribbon under each
     /// letter matches it.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw(&mut self, cv: &mut Canvas, cx: &Ctx, room: usize, ceil: usize, a: f32, lift: f32, look: &Look, span: (i32, usize)) {
+    pub fn draw(&mut self, cv: &mut Canvas, cx: &Ctx, room: usize, a: f32, lift: f32, look: &Look, span: (i32, usize)) {
         let f = cx.f;
         let (w, h) = (cx.w as i32, cx.h as i32);
         let dt = cx.dt;
@@ -71,8 +65,6 @@ impl Ribbon {
             return;
         }
         let int = (f.intensity + 0.2 * lift).min(1.0);
-        let want = ((f.intensity - 0.55) / 0.25).clamp(0.0, 1.0);
-        self.mirror += (want - self.mirror) * (1.0 - (-dt / 0.8).exp());
         let colour = |x: f32| look.at(((x - span.0 as f32) / span.1.max(1) as f32 * 0.8 + 0.2).clamp(0.0, 1.0));
 
         // a brightness bump on every beat, a pulse on the downbeat
@@ -139,24 +131,6 @@ impl Ribbon {
                 let glyph = if cells >= 1.0 { '█' } else if cells >= 0.5 { '▀' } else { '▔' };
                 let fade = 0.28 * (1.0 - k as f32 / down as f32 * 0.6);
                 cv.put_lit(x, base + 1 + k as i32, glyph, base_col.scale(bright * fade).mix(WHITE, a * 0.15 * pl));
-            }
-        }
-
-        // the ceiling: the skyline flipped both ways, hanging from the top
-        if self.mirror > 0.02 && ceil >= 3 {
-            let lim = (ceil - 1) as f32;
-            for x in 0..w {
-                let src = tops[(w - 1 - x) as usize] as f32 / 8.0;
-                let m = (src * 0.75 * self.mirror).min(lim);
-                let base_col = colour(x as f32).scale(bright * (0.35 + 0.35 * self.mirror));
-                let mut k = 0;
-                while (k as f32) < m {
-                    let left = m - k as f32;
-                    let glyph = if left >= 1.0 { '█' } else if left >= 0.5 { '▀' } else { '▔' };
-                    let fade = 1.0 - 0.5 * k as f32 / lim.max(1.0);
-                    cv.put_lit(x, k, glyph, base_col.scale(fade).mix(WHITE, a * 0.25 * flash));
-                    k += 1;
-                }
             }
         }
 

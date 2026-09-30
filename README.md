@@ -44,10 +44,8 @@ between.
     flashes on kicks, throws hi-hat sparks and pulses outward on the downbeat.
     It wears the banner's colours (each column takes the colour of the letters
     above it). Spikes run into the headroom under the banner on a soft limit
-    instead of flat-topping. Once the music is really going, a mirror image
-    grows down from the top edge too, flipped left for right. It lifts a
-    little between holds to carry the transition, and it gives way to the
-    `floor` theme's own bars.
+    instead of flat-topping. It lifts a little between holds to carry the
+    transition, and it gives way to the `floor` theme's own bars.
   - **Colours** are shared: the banner, the theme's accents and the ribbon
     all read one palette, so they always match. Each cycle gets a neon
     palette (more likely the busier the music) or the album's, saturated;
@@ -58,7 +56,9 @@ between.
     breakdown, a breath between sections) fades out: the outro, then the
     next intro straight away, with a calmer pick. A high (a drop, or a surge
     in level on a kick) cuts: the next, busier theme takes over at once
-    under a flash, with no outro or intro. A section change cuts when the
+    under a flash, with no outro or intro. A theme that moves the letters
+    (`bounce`, `springs`, `glitch`) first brings them back home, so neither
+    kind of switch jumps. A section change cuts when the
     music is busy and otherwise waits for a lull. The 16/32-bar timer only
     marks a hold as due.
 

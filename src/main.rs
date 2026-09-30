@@ -301,10 +301,8 @@ fn main() {
         lift.step(dt, 0.6);
         if ribbon_f.on() && banner.fits {
             let room = (h as i32 - banner.bottom() - 1).max(0) as usize;
-            // the mirror along the top, except where the banner flies there
-            let ceil = if holding == Some(fx::themes::Theme::Bounce) { 0 } else { (banner.top() - 1).max(0) as usize };
             let (look, ox, bw) = banner.look();
-            ribbon.draw(&mut cv, &cx, room, ceil, ribbon_f.a(), lift.a(), look, (ox, bw));
+            ribbon.draw(&mut cv, &cx, room, ribbon_f.a(), lift.a(), look, (ox, bw));
         }
         banner.draw(&mut cv, &cx, want_music, &mut dir, &mut spec);
         fx::label::draw(&mut cv, &cx, &track, label_f.a());

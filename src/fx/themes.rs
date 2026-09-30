@@ -169,6 +169,8 @@ struct Drop {
 /// Per-theme state for one hold; rebuilt when a theme starts.
 pub struct Hold {
     pub theme: Theme,
+    /// A switch is waiting: stop moving the letters and bring them home.
+    pub homing: bool,
     rng: Rng,
     t: f32,
     flash: f32,
@@ -235,6 +237,7 @@ impl Hold {
     pub fn new(theme: Theme) -> Hold {
         Hold {
             theme,
+            homing: false,
             rng: Rng::seeded(),
             t: 0.0,
             flash: 0.0,
@@ -283,6 +286,19 @@ impl Hold {
             Theme::Floor => self.floor(cv, cx, chars, g, spec, react, look),
             Theme::Bounce => self.bounce(cv, cx, chars, g, react, look),
             Theme::Warp => self.warp(cv, cx, chars, g, react, look),
+        }
+    }
+
+    /// True once every letter is back at its home cell, so a switch won't
+    /// make the banner jump.
+    pub fn at_home(&self, chars: &[Ch]) -> bool {
+        match self.theme {
+            Theme::Bounce => self.off == (0.0, 0.0),
+            Theme::Springs => chars.iter().all(|c| {
+                (c.pos.0 - c.home.0).abs() < 0.4 && (c.pos.1 - c.home.1).abs() < 0.4 && c.vel.0.hypot(c.vel.1) < 2.0
+            }),
+            Theme::Glitch => self.tears.is_empty(),
+            _ => true,
         }
     }
 
@@ -646,7 +662,7 @@ impl Hold {
             self.scramble = 0.6;
         }
         self.scramble -= cx.dt;
-        if f.snare > 0.4 && self.tears.len() < 3 && react > 0.5 {
+        if f.snare > 0.4 && self.tears.len() < 3 && react > 0.5 && !self.homing {
             for _ in 0..1 + self.rng.below(3) {
                 let s = (2 + self.rng.below(7)) as i32 * if self.rng.chance(0.5) { 1 } else { -1 };
                 self.tears.push((self.rng.below(g.bh), s, self.rng.range(0.06, 0.12)));
@@ -659,7 +675,7 @@ impl Hold {
             shift[r] = s;
         }
         let p = if self.scramble > 0.0 { 1.0 } else { (0.01 + 0.4 * f.hat_env + 0.15 * (f.treb_att - 1.0).max(0.0)).min(0.6) } * react;
-        let split = (f.kick_env * 2.4 * react).round() as i32;
+        let split = if self.homing { 0 } else { (f.kick_env * 2.4 * react).round() as i32 };
         let frame = (self.t * 15.0) as u32;
         let (mag, cyan) = (hex(VHS[0]), hex(VHS[1]));
         if split > 0 {
@@ -690,7 +706,7 @@ impl Hold {
         let f = cx.f;
         let dt = cx.dt;
         let centre = (g.ox as f32 + g.bw as f32 / 2.0, g.oy as f32 + g.bh as f32 / 2.0);
-        if f.drop {
+        if f.drop && !self.homing {
             for c in chars.iter_mut() {
                 let ang = self.rng.range(0.0, std::f32::consts::TAU);
                 let sp = self.rng.range(30.0, 110.0);
@@ -703,11 +719,11 @@ impl Hold {
         self.stiff += (60.0 - self.stiff) * (1.0 - (-dt / 1.4).exp());
         let k = self.stiff;
         let damp = 2.0 * k.sqrt() * 0.55;
-        let wob = f.bass_att.min(2.5) * 0.45;
+        let wob = if self.homing { 0.0 } else { f.bass_att.min(2.5) * 0.45 };
         self.step_sweep(cx);
         let pulse = f.kick_env;
         for c in chars.iter_mut() {
-            if f.kick > 0.2 {
+            if f.kick > 0.2 && !self.homing {
                 let (dx, dy) = (c.home.0 - centre.0, c.home.1 - centre.1);
                 let l = (dx * dx + dy * dy * 4.0).sqrt().max(1.0);
                 c.vel.0 += dx / l * f.kick * 3.0;
@@ -749,15 +765,50 @@ impl Hold {
 
     fn bounce(&mut self, cv: &mut Canvas, cx: &Ctx, chars: &[Ch], g: Geom, react: f32, look: &mut Look) {
         let f = cx.f;
+        if self.head == (0.0, 0.0) {
+            let a = self.rng.range(0.3, 1.2) * if self.rng.chance(0.5) { 1.0 } else { -1.0 };
+            self.head = (a.cos() * if self.rng.chance(0.5) { 1.0 } else { -1.0 }, a.sin());
+        }
+        if self.homing {
+            // glide back to the middle, the trail shrinking behind it
+            let k = (-cx.dt / 0.15).exp();
+            self.off = (self.off.0 * k, self.off.1 * k);
+            if self.off.0.hypot(self.off.1 * 2.0) < 0.3 {
+                self.off = (0.0, 0.0);
+            }
+            if self.rng.chance(cx.dt * 10.0) {
+                self.trail.pop();
+            }
+        } else {
+            self.fly(cx, g, react, look);
+        }
+        let place = |o: (f32, f32), c: &Ch| ((c.home.0 + o.0 * react).round() as i32, (c.home.1 + o.1 * react).round() as i32);
+        for c in chars {
+            let (x, y) = place(self.off, c);
+            // over the ribbon too: a flying banner must stay readable
+            let col = c.fin.mix(WHITE, 0.35 * f.kick_env.min(1.0));
+            cv.put_top(x, y, c.ch, c.fin.mix(col, react).mix(WHITE, 0.6 * self.flash));
+        }
+        // the trail: older copies behind, each a step further round the palette
+        let ghosts = ((0.5 + 3.5 * f.intensity) * react) as usize;
+        for (k, &o) in self.trail.iter().enumerate().take(ghosts) {
+            let fade = 0.3 - 0.07 * k as f32;
+            for c in chars {
+                let (x, y) = place(o, c);
+                let u = (c.dx as f32 / g.bw as f32 * 0.8 + 0.12 * k as f32).fract();
+                cv.put_under(x, y, c.ch, look.at(u).scale(fade * cx.light));
+            }
+        }
+    }
+
+    /// Bounce's flight: speed from the music, kicks swerve, walls reflect.
+    fn fly(&mut self, cx: &Ctx, g: Geom, react: f32, look: &mut Look) {
+        let f = cx.f;
         let (w, h) = (cx.w as i32, cx.h as i32);
         // where the banner may go: the whole width, from the top down to a
         // third of the way into the ribbon's room
         let (x0, x1) = ((-g.ox + 1) as f32, (w - g.ox - g.bw as i32 - 1) as f32);
         let (y0, y1) = ((-g.oy + 1) as f32, ((h - g.oy - g.bh as i32) / 3) as f32);
-        if self.head == (0.0, 0.0) {
-            let a = self.rng.range(0.3, 1.2) * if self.rng.chance(0.5) { 1.0 } else { -1.0 };
-            self.head = (a.cos() * if self.rng.chance(0.5) { 1.0 } else { -1.0 }, a.sin());
-        }
         // kicks swerve it once the music's going
         if f.kick > 0.35 && f.intensity > 0.45 {
             let r = self.rng.range(-0.5, 0.5);
@@ -791,23 +842,6 @@ impl Hold {
         if (self.off.0 - last.0).hypot((self.off.1 - last.1) * 2.0) > 5.0 {
             self.trail.insert(0, self.off);
             self.trail.truncate(4);
-        }
-        let place = |o: (f32, f32), c: &Ch| ((c.home.0 + o.0 * react).round() as i32, (c.home.1 + o.1 * react).round() as i32);
-        for c in chars {
-            let (x, y) = place(self.off, c);
-            // over the ribbon too: a flying banner must stay readable
-            let col = c.fin.mix(WHITE, 0.35 * f.kick_env.min(1.0));
-            cv.put_top(x, y, c.ch, c.fin.mix(col, react).mix(WHITE, 0.6 * self.flash));
-        }
-        // the trail: older copies behind, each a step further round the palette
-        let ghosts = ((0.5 + 3.5 * f.intensity) * react) as usize;
-        for (k, &o) in self.trail.iter().enumerate().take(ghosts) {
-            let fade = 0.3 - 0.07 * k as f32;
-            for c in chars {
-                let (x, y) = place(o, c);
-                let u = (c.dx as f32 / g.bw as f32 * 0.8 + 0.12 * k as f32).fract();
-                cv.put_under(x, y, c.ch, look.at(u).scale(fade * cx.light));
-            }
         }
     }
 
