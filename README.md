@@ -30,6 +30,15 @@ between.
     bends the banner.
   - `floor`: the banner holds still over a cava bar floor.
 
+  - Under all of it runs a **ribbon** along the bottom edge: a mirrored stereo
+    skyline with a dim reflection, on through intros, outros and the gaps
+    between them, so the screen never goes still while the music plays. How
+    much it does follows the music's intensity. Quiet music gets a low, dim,
+    still ribbon. Busy music gets a tall one that steps colour on the beat,
+    flashes on kicks, throws hi-hat sparks and pulses outward on the downbeat.
+    It lifts a little between holds to carry the transition, and it gives way
+    to the `floor` theme's own bars.
+
   Everything is drawn in plain character cells: no half-block backdrops, no
   stacked layers. Themes without a fixed palette take their colours from the
   album art. Calm music draws calm themes and loud music busy ones. While a
@@ -65,7 +74,7 @@ Options: `--fps N` (default 60), `--banner FILE`, `--idle`,
 | `mpris.rs` | now playing (zbus), plus the KDE locker check in screensaver mode |
 | `art.rs` | cover fetch and cache, OKLab k-means palette |
 | `canvas.rs` | cell buffer with half-block pixels and braille dots; the diffed output |
-| `fx/*` | banner cycle, text effects, music themes, bar floor, idle aurora / stars / rain, player label |
+| `fx/*` | banner cycle, text effects, music themes, bar floor, music ribbon, idle aurora / stars / rain, player label |
 | `scene.rs` | picks each cycle's theme and says when its hold ends |
 
 ### DSP choices
@@ -87,6 +96,11 @@ These follow `docs/research-brief.md`, a literature review with references. `doc
   tolerance is only about 45 ms (ITU-R BT.1359).
 - **Features.** Momentary and short-term loudness, log centroid, flatness, and
   MilkDrop-style band ratios.
+  - **Intensity:** onset density, loudness (relative and absolute), how much
+    of the spectrum is lit, and kick/snare punch. It rises in 0.4 s and falls
+    in 2 s. It drives the ribbon and the calm/busy theme choice. The relative
+    loudness has a small weight because it reads near-full for any steady
+    track once the auto-gain settles.
   - **Drop:** a stretch of more than 2 s with the bass below half its running
     average, then the bass coming back.
   - **Section change:** the last 4 s of features against the 8 s before
@@ -103,7 +117,7 @@ These follow `docs/research-brief.md`, a literature review with references. `doc
 Measured at 160×45 and 30 fps, on this machine, over a 150 s demo run
 through four themes:
 - **CPU:** 0.3 ms per frame.
-- **Output:** 7 KB per frame on average. Only changed cells are sent, and cells
+- **Output:** 10–12 KB per frame on average (6 KB without the ribbon). Only changed cells are sent, and cells
   whose colour barely changed are skipped.
 - **Audio:** `parec` only runs while a player reports Playing. It stops 10 s
   after playback stops.

@@ -9,6 +9,7 @@ pub mod effects;
 pub mod label;
 pub mod stars;
 pub mod rain;
+pub mod ribbon;
 pub mod spectrum;
 pub mod themes;
 

@@ -79,7 +79,7 @@ impl Director {
     }
 
     fn pick(&mut self, f: &Features) -> Theme {
-        let e = (0.6 * f.energy + 0.4 * (f.onset_rate / 6.0).min(1.0)).clamp(0.0, 1.0);
+        let e = f.intensity;
         let pool: Vec<Theme> = ALL.iter().copied().filter(|t| !self.recent.contains(t)).collect();
         if self.busy_next {
             return pool.iter().copied().max_by(|a, b| a.busy().total_cmp(&b.busy())).unwrap_or(Theme::Fire);

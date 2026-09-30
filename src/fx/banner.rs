@@ -194,6 +194,16 @@ impl Banner {
         }
     }
 
+    /// The theme whose hold is running now (None in intros, outros, gaps).
+    pub fn holding(&self) -> Option<Theme> {
+        self.theme.filter(|_| matches!(self.phase, Phase::Hold(_) | Phase::Leave(_)))
+    }
+
+    /// First screen row below the banner.
+    pub fn bottom(&self) -> i32 {
+        self.oy + self.bh as i32
+    }
+
     /// True while the matrix intro runs (the rain layer joins in).
     pub fn wants_rain(&self) -> bool {
         matches!(self.phase, Phase::Intro) && self.current == Some(Kind::Matrix)

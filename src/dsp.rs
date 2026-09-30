@@ -158,6 +158,10 @@ pub struct Features {
     pub hat_env: f32,
     /// Onsets per second over ~2 s.
     pub onset_rate: f32,
+    /// How much is going on, 0 (quiet, sparse) .. 1 (loud, dense, punchy):
+    /// onset density, loudness (relative and absolute), how much of the
+    /// spectrum is lit, and kick/snare punch. Rises in ~0.4 s, falls in ~2 s.
+    pub intensity: f32,
     /// Predicted beat this frame (fired slightly early).
     pub beat: bool,
     pub beat_phase: f32,
@@ -236,6 +240,7 @@ pub struct Analyzer {
     nov_since: f32,
     gate_open: bool,
     below: f32,
+    punch: f32,
     pub f: Features,
 }
 
@@ -319,6 +324,7 @@ impl Analyzer {
             nov_since: 0.0,
             gate_open: false,
             below: 0.0,
+            punch: 0.0,
             f: Features { bpm: 120.0, silent: true, ..Default::default() },
         }
     }
@@ -509,6 +515,18 @@ impl Analyzer {
         decay(&mut f.kick_env, f.kick, 0.18);
         decay(&mut f.snare_env, f.snare, 0.14);
         decay(&mut f.hat_env, f.hat, 0.08);
+
+        // intensity: a blend of everything that reads as "busy", absolute
+        // enough that a quiet track stays low even once the auto-gain settles
+        ema(&mut self.punch, f.kick_env.max(f.snare_env).min(1.0), dt, 1.0);
+        let dens = ((f.onset_rate - 0.5) / 5.0).clamp(0.0, 1.0);
+        let abs = ((10.0 * (self.ms_short + 1e-12).log10() + 42.0) / 26.0).clamp(0.0, 1.0);
+        let lit = if f.mono.is_empty() { 0.0 } else { f.mono.iter().sum::<f32>() / f.mono.len() as f32 };
+        let lit = ((lit - 0.1) / 0.45).clamp(0.0, 1.0);
+        let raw = 0.35 * dens + 0.15 * f.energy.powi(2) + 0.15 * abs + 0.15 * lit + 0.2 * (self.punch * 1.6).min(1.0);
+        let raw = if f.silent { 0.0 } else { raw };
+        let tau = if raw > f.intensity { 0.4 } else { 2.0 };
+        ema(&mut f.intensity, raw, dt, tau);
     }
 
     fn spectral_features(&mut self, powers: &[f32], dt: f32) {

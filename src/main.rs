@@ -130,6 +130,7 @@ fn main() {
     let mut aurora = fx::aurora::Aurora;
     let mut stars = fx::stars::Stars::new();
     let mut rain = fx::rain::Rain::new();
+    let mut ribbon = fx::ribbon::Ribbon::new();
     let mut banner = fx::banner::Banner::load(&o.banner);
     let mut dir = scene::Director::new();
     if let Some(th) = &o.theme {
@@ -147,6 +148,8 @@ fn main() {
 
     let mut music = Fader::default();
     let mut label_f = Fader::default();
+    let mut ribbon_f = Fader::default();
+    let mut lift = Fader::default();
     let mut idle_layers = [Fader::default(); 3]; // aurora, stars, rain
     let mut idle_forced = o.idle;
     let mut debug = o.debug;
@@ -249,7 +252,7 @@ fn main() {
         let f = &an.f;
         if o.trace && (f.beat || f.kick > 0.0 || f.drop || f.section || frames % 30 == 0) {
             eprintln!(
-                "{t:7.2} bpm {:5.1} conf {:.2} ph {:.2} {}{}{}{}{}{} loud {:.2} en {:.2} ten {:.2} rms {:.1}",
+                "{t:7.2} bpm {:5.1} conf {:.2} ph {:.2} {}{}{}{}{}{} loud {:.2} en {:.2} int {:.2} ten {:.2} rms {:.1}",
                 f.bpm, f.beat_conf, f.beat_phase,
                 if f.beat { 'B' } else { ' ' },
                 if f.kick > 0.0 { 'K' } else { ' ' },
@@ -257,7 +260,7 @@ fn main() {
                 if f.hat > 0.0 { 'H' } else { ' ' },
                 if f.drop { 'D' } else { ' ' },
                 if f.section { '§' } else { ' ' },
-                f.loud, f.energy, f.tension, f.rms_db
+                f.loud, f.energy, f.intensity, f.tension, f.rms_db
             );
         }
 
@@ -295,17 +298,28 @@ fn main() {
             stars.draw(&mut cv, &cx, idle_layers[1].a());
         }
         cv.resolve_dots();
+        // the music ribbon runs under every phase; the floor theme has its own bars
+        let holding = banner.holding();
+        ribbon_f.target = if want_music && holding != Some(fx::themes::Theme::Floor) { 1.0 } else { 0.0 };
+        ribbon_f.step(dt, if ribbon_f.target > 0.5 { 0.8 } else { 0.6 });
+        lift.target = if holding.is_none() { 1.0 } else { 0.0 };
+        lift.step(dt, 0.6);
+        if ribbon_f.on() && banner.fits {
+            let room = (h as i32 - banner.bottom() - 1).max(0) as usize;
+            ribbon.draw(&mut cv, &cx, room, ribbon_f.a(), lift.a());
+        }
         banner.draw(&mut cv, &cx, want_music, &mut dir, &mut spec);
         fx::label::draw(&mut cv, &cx, &track, label_f.a());
         if debug {
             let s = format!(
-                " {:>4.1}ms {:>6}B  {:>5.1}bpm conf {:.2}  loud {:.2} en {:.2} cen {:.2} flat {:.2}  {}{}{}  ten {:.2}  {} ",
+                " {:>4.1}ms {:>6}B  {:>5.1}bpm conf {:.2}  loud {:.2} en {:.2} int {:.2} cen {:.2} flat {:.2}  {}{}{}  ten {:.2}  {} ",
                 busy.as_secs_f32() * 1000.0 / frames.max(1) as f32,
                 bytes / frames.max(1),
                 f.bpm,
                 f.beat_conf,
                 f.loud,
                 f.energy,
+                f.intensity,
                 f.centroid,
                 f.flatness,
                 if f.kick_env > 0.5 { 'K' } else { '·' },
