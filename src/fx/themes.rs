@@ -311,7 +311,7 @@ impl Hold {
             return false;
         }
         match self.theme {
-            Theme::Bounce => self.off == (0.0, 0.0),
+            Theme::Bounce => self.off == (0.0, 0.0) && self.trail.is_empty(),
             Theme::Springs => chars.iter().all(|c| {
                 (c.pos.0 - c.home.0).abs() < 0.4 && (c.pos.1 - c.home.1).abs() < 0.4 && c.vel.0.hypot(c.vel.1) < 2.0
             }),
@@ -798,14 +798,22 @@ impl Hold {
             self.head = (a.cos() * if self.rng.chance(0.5) { 1.0 } else { -1.0 }, a.sin());
         }
         if self.homing {
-            // glide back to the middle, the trail shrinking behind it
-            let k = (-cx.dt / 0.15).exp();
-            self.off = (self.off.0 * k, self.off.1 * k);
-            if self.off.0.hypot(self.off.1 * 2.0) < 0.3 {
+            // fly home at flying speed, easing only over the last few cells,
+            // trail and all; once there, the trail catches up
+            let d = self.off.0.hypot(self.off.1 * 2.0);
+            if d > 0.05 {
+                let speed = self.flight_speed(f).max(12.0).min(d * 5.0 + 3.0);
+                let step = (speed * cx.dt).min(d);
+                self.off.0 -= self.off.0 / d * step;
+                self.off.1 -= self.off.1 * 2.0 / d * step * 0.5;
+                self.record_trail();
+            } else {
                 self.off = (0.0, 0.0);
-            }
-            if self.rng.chance(cx.dt * 10.0) {
-                self.trail.pop();
+                self.tick += cx.dt;
+                if self.tick > 0.08 {
+                    self.tick = 0.0;
+                    self.trail.pop();
+                }
             }
         } else {
             self.fly(cx, g, react, look);
@@ -843,7 +851,7 @@ impl Hold {
             let (c, s) = (r.cos(), r.sin());
             self.head = (self.head.0 * c - self.head.1 * s, self.head.0 * s + self.head.1 * c);
         }
-        let speed = (5.0 + 30.0 * f.intensity) * (1.0 + 1.5 * f.kick_env.min(1.0)) * react;
+        let speed = self.flight_speed(f) * react;
         self.off.0 += self.head.0 * speed * cx.dt;
         self.off.1 += self.head.1 * speed * 0.5 * cx.dt; // rows are twice as tall
         let mut hit = false;
@@ -865,7 +873,15 @@ impl Hold {
             look.nudge(0.22);
             look.flash = look.flash.max(0.5 * f.intensity);
         }
-        // copies far enough apart to read as separate banners, not a smear
+        self.record_trail();
+    }
+
+    fn flight_speed(&self, f: &crate::dsp::Features) -> f32 {
+        (5.0 + 30.0 * f.intensity) * (1.0 + 1.5 * f.kick_env.min(1.0))
+    }
+
+    /// Copies far enough apart to read as separate banners, not a smear.
+    fn record_trail(&mut self) {
         let last = self.trail.first().copied().unwrap_or((f32::MAX, 0.0));
         if (self.off.0 - last.0).hypot((self.off.1 - last.1) * 2.0) > 5.0 {
             self.trail.insert(0, self.off);

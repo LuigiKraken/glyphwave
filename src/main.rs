@@ -302,10 +302,10 @@ fn main() {
         lift.step(dt, 0.6);
         if ribbon_f.on() && banner.fits {
             let room = (h as i32 - banner.bottom() - 1).max(0) as usize;
-            let (look, ox, bw) = banner.look();
-            ribbon.draw(&mut cv, &cx, room, ribbon_f.a(), lift.a(), look, (ox, bw));
+            ribbon.draw(&mut cv, &cx, room, ribbon_f.a(), lift.a(), banner.tint());
         }
         banner.draw(&mut cv, &cx, want_music, &mut dir, &mut spec);
+        banner.sample(&cv, dt);
         fx::label::draw(&mut cv, &cx, &track, label_f.a());
         if debug {
             let s = format!(

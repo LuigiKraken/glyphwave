@@ -70,6 +70,10 @@ pub struct Banner {
     /// (and for how long it has waited).
     waiting: Option<Cue>,
     wait_t: f32,
+    /// The colour of the letters above each screen column, smoothed, for
+    /// the ribbon (sampled from what was drawn, whatever drew it).
+    tint: Vec<[f32; 3]>,
+    tint_rgb: Vec<Rgb>,
 }
 
 impl Banner {
@@ -124,6 +128,8 @@ impl Banner {
             last_vivid: usize::MAX,
             waiting: None,
             wait_t: 0.0,
+            tint: Vec::new(),
+            tint_rgb: Vec::new(),
         }
     }
 
@@ -239,10 +245,91 @@ impl Banner {
         self.oy + self.bh as i32
     }
 
-    /// The running cycle's colours and the banner's columns on screen (left
-    /// edge, width), so other layers can colour to match the letters.
-    pub fn look(&self) -> (&Look, i32, usize) {
-        (&self.look, self.ox, self.bw)
+    /// The colour of the letters above each screen column (last frame's).
+    pub fn tint(&self) -> &[Rgb] {
+        &self.tint_rgb
+    }
+
+    /// After drawing: read back the colours in the banner's box, column by
+    /// column (brighter cells count more, the ribbon's own cells not at
+    /// all), fill the gaps from the neighbours, and ease each column toward
+    /// it. Columns with nothing drawn fall back to the palette; columns off
+    /// the banner's sides take its edge colours.
+    pub fn sample(&mut self, cv: &Canvas, dt: f32) {
+        if !self.fits {
+            return;
+        }
+        let bw = self.bw;
+        let mut got: Vec<Option<[f32; 3]>> = vec![None; bw];
+        for (j, slot) in got.iter_mut().enumerate() {
+            let x = self.ox + j as i32;
+            let (mut acc, mut wt) = ([0.0f32; 3], 0.0f32);
+            for y in self.oy..self.oy + self.bh as i32 {
+                let Some(i) = cv.idx(x, y) else { continue };
+                let c = cv.cells[i];
+                let m = c.fg.0.max(c.fg.1).max(c.fg.2) as f32;
+                if crate::canvas::empty(c.ch) || cv.is_lit(i) || m < 24.0 {
+                    continue;
+                }
+                acc[0] += c.fg.0 as f32 * m;
+                acc[1] += c.fg.1 as f32 * m;
+                acc[2] += c.fg.2 as f32 * m;
+                wt += m;
+            }
+            if wt > 0.0 {
+                // hue and saturation only: the ribbon sets its own brightness
+                let peak = acc[0].max(acc[1]).max(acc[2]).max(1e-3);
+                *slot = Some([acc[0] / peak * 230.0, acc[1] / peak * 230.0, acc[2] / peak * 230.0]);
+            }
+        }
+        let any = got.iter().any(|g| g.is_some());
+        let target: Vec<[f32; 3]> = (0..bw)
+            .map(|j| {
+                if !any {
+                    let c = self.look.at(j as f32 / bw.max(1) as f32 * 0.8 + 0.2);
+                    return [c.0 as f32, c.1 as f32, c.2 as f32];
+                }
+                // nearest sampled column on each side, blended by distance
+                let l = (0..=j).rev().find_map(|k| got[k].map(|c| (j - k, c)));
+                let r = (j..bw).find_map(|k| got[k].map(|c| (k - j, c)));
+                match (l, r) {
+                    (Some((dl, a)), Some((dr, b))) if dl + dr > 0 => {
+                        let t = dl as f32 / (dl + dr) as f32;
+                        [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
+                    }
+                    (Some((_, a)), _) | (_, Some((_, a))) => a,
+                    _ => [255.0; 3],
+                }
+            })
+            .collect();
+        // a little blur across columns, so single odd glyphs don't streak
+        let target: Vec<[f32; 3]> = (0..bw)
+            .map(|j| {
+                let (lo, hi) = (j.saturating_sub(3), (j + 4).min(bw));
+                let mut m = [0.0f32; 3];
+                for t in &target[lo..hi] {
+                    for n in 0..3 {
+                        m[n] += t[n] / (hi - lo) as f32;
+                    }
+                }
+                m
+            })
+            .collect();
+        let w = self.w;
+        let fresh = self.tint.len() != w;
+        if fresh {
+            self.tint = vec![[0.0; 3]; w];
+        }
+        let k = if fresh { 1.0 } else { 1.0 - (-dt / 0.15).exp() };
+        self.tint_rgb.resize(w, Rgb(255, 255, 255));
+        for x in 0..w {
+            let j = (x as i32 - self.ox).clamp(0, bw as i32 - 1) as usize;
+            let (t, c) = (target[j], &mut self.tint[x]);
+            for n in 0..3 {
+                c[n] += (t[n] - c[n]) * k;
+            }
+            self.tint_rgb[x] = Rgb(c[0] as u8, c[1] as u8, c[2] as u8);
+        }
     }
 
     /// True while the matrix intro runs (the rain layer joins in).

@@ -127,6 +127,11 @@ impl Canvas {
         }
     }
 
+    /// Whether a cell belongs to the lit layer (the ribbon).
+    pub fn is_lit(&self, i: usize) -> bool {
+        self.lit[i]
+    }
+
     /// Dim everything already drawn in a cell (used to seat a label or banner).
     pub fn dim(&mut self, x: i32, y: i32, a: f32) {
         if let Some(i) = self.idx(x, y) {

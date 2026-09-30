@@ -5,17 +5,18 @@
 //! A continuous stereo skyline, mirrored like cava (bass in the middle, left
 //! channel to the left), with a dim reflection hanging under its baseline.
 //! It wears the banner's colours: each column takes the colour of the
-//! letters above it, read from the shared `Look`, so it steps with the
-//! palette on the beat and crossfades when a new cycle brings a new one.
+//! letters actually drawn above it (`Banner::tint`), so it follows the
+//! palette on the beat, a new cycle's palette, and an intro's own colours
+//! (the green of the matrix rain) alike.
 //! How much it does follows `intensity`: quiet music gets a low, dim, still
 //! ribbon; busy music a tall one that brightens on the beat, flashes on
 //! kicks, throws hi-hat sparks and sends a pulse outward on each downbeat.
 //! Between holds it lifts a little, to carry the transition. Spikes run into
 //! the headroom under the banner on a soft limit, so they never flat-top.
 
-use super::{BLOCKS, Ctx, Look, Rng};
+use super::{BLOCKS, Ctx, Rng};
 use crate::canvas::Canvas;
-use crate::color::WHITE;
+use crate::color::{Rgb, WHITE};
 
 struct Spark {
     x: i32,
@@ -53,11 +54,9 @@ impl Ribbon {
     }
 
     /// Draw into the bottom `room` rows at opacity `a`; `lift` (0..1) is the
-    /// extra height and life it gets while the banner is between holds. `look` and `span` (left edge,
-    /// width) are the banner's colours and columns, so the ribbon under each
-    /// letter matches it.
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw(&mut self, cv: &mut Canvas, cx: &Ctx, room: usize, a: f32, lift: f32, look: &Look, span: (i32, usize)) {
+    /// extra height and life it gets while the banner is between holds.
+    /// `tint` is the colour of the letters above each screen column.
+    pub fn draw(&mut self, cv: &mut Canvas, cx: &Ctx, room: usize, a: f32, lift: f32, tint: &[Rgb]) {
         let f = cx.f;
         let (w, h) = (cx.w as i32, cx.h as i32);
         let dt = cx.dt;
@@ -65,7 +64,10 @@ impl Ribbon {
             return;
         }
         let int = (f.intensity + 0.2 * lift).min(1.0);
-        let colour = |x: f32| look.at(((x - span.0 as f32) / span.1.max(1) as f32 * 0.8 + 0.2).clamp(0.0, 1.0));
+        if tint.len() != w as usize {
+            return;
+        }
+        let colour = |x: f32| tint[(x as usize).min(tint.len() - 1)];
 
         // a brightness bump on every beat, a pulse on the downbeat
         if f.beat {
