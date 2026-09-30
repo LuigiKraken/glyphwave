@@ -139,9 +139,11 @@ released yet. Planned before the first release:
   the screensaver shows who's calling, read from the desktop's call
   notification. You answer in the app itself: while a call rings, every key
   (the music keys too) and the mouse end the screensaver.
-- **Your own logo as the banner.** By default the banner is the logo your
-  fastfetch or neofetch shows, so it matches your system without any setup.
-  A custom text file still works.
+- **Three kinds of banner.** Your system's logo, taken from fastfetch or
+  neofetch; your machine's name in big block letters; or your own art. By
+  default it uses the logo if you have one of those tools, otherwise the
+  name. For your own art, save it as `~/.config/glyphwave/banner.txt` and
+  that's it.
 - **Muted counts as paused.** With the output muted or at 0 %, the
   visualizer stops as if the music were paused. Today it keeps dancing,
   because the capture records the sound before the system volume is applied.
@@ -152,6 +154,8 @@ released yet. Planned before the first release:
 - **Download and run.** One self-contained Linux binary, built for each
   release, so nobody needs Rust. It will be tested in the common terminals
   and desktops.
+- **A recording at the top of this README,** so you can see it move before
+  reading anything.
 
 ## How it works
 
