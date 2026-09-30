@@ -162,8 +162,7 @@ pub fn vivid(i: usize) -> Vec<Rgb> {
     VIVID[i % VIVID.len()].iter().map(|h| Rgb::hex(h)).collect()
 }
 
-/// Push a palette's chroma and lightness up so it glows on black
-/// (album covers are often muted).
+/// Push a palette's chroma and lightness up so it glows on black.
 pub fn saturate(stops: &[Rgb]) -> Vec<Rgb> {
     stops
         .iter()

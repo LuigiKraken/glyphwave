@@ -66,8 +66,8 @@ between.
     marks a hold as due.
 
   Everything is drawn in plain character cells: no half-block backdrops, no
-  stacked layers. Themes without a fixed palette take their colours from the
-  album art or a neon set. Calm music draws calm themes and loud music busy ones. While a
+  stacked layers. Themes without a fixed palette take a neon set or the
+  base purple → cyan → white, saturated. Calm music draws calm themes and loud music busy ones. While a
   track plays, the top-left corner shows its title, artist · album, and
   progress with the length. When playback pauses or stops, the corner stays
   empty.
@@ -86,7 +86,7 @@ cargo build --release
 Keys (interactive): `q` quit, `space` play/pause, `n`/`p` next/previous,
 `v` next theme (or next text effect), `i` toggle idle/music, `d` debug overlay.
 
-Options: `--fps N` (default 60), `--banner FILE`, `--idle`,
+Options: `--fps N` (default 30), `--banner FILE`, `--idle`,
 `--theme fire` (always use one theme; `--help` lists them),
 `--debug`, `--trace` (beat/onset/drop events to stderr), and for testing
 `--frames N`, `--size WxH` and `--stats`.
@@ -97,8 +97,7 @@ Options: `--fps N` (default 60), `--banner FILE`, `--idle`,
 |---|---|
 | `audio.rs` | `parec` from `@DEFAULT_MONITOR@`, float32 stereo at 48 kHz, into a ring buffer; plus the synthetic demo track |
 | `dsp.rs` | spectrum, onsets, tempo, beat phase, loudness, drop and section detection |
-| `mpris.rs` | now playing (zbus), plus the KDE locker check in screensaver mode |
-| `art.rs` | cover fetch and cache, OKLab k-means palette |
+| `mpris.rs` | now playing (zbus), plus the KDE locker check in screensaver mode; re-read only on bus signals |
 | `canvas.rs` | cell buffer with half-block pixels and braille dots; the diffed output |
 | `fx/*` | banner cycle, text effects, music themes, bar floor, music ribbon, idle stars / rain, player label |
 | `scene.rs` | picks each cycle's theme and says when its hold ends |
@@ -148,7 +147,10 @@ through four themes:
 - **Audio:** `parec` only runs while a player reports Playing. It stops 10 s
   after playback stops.
 
-If Konsole itself gets busy, `--fps 30` halves everything.
+- **Bus:** the player and locker are re-read only when they signal a change
+  (plus a 30 s recheck), not polled.
+
+30 fps is the default; Konsole's own redraw cost scales with it.
 
 ## Credits
 

@@ -113,7 +113,9 @@ impl Canvas {
     #[inline]
     fn put_over(&mut self, i: usize, ch: char, fg: Rgb) {
         let c = &mut self.cells[i];
-        c.ch = ch;
+        // track titles come from any MPRIS player (a web page, in a browser);
+        // a control character would reach the terminal as an escape sequence
+        c.ch = if ch.is_control() { ' ' } else { ch };
         c.fg = fg;
     }
 

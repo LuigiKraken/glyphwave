@@ -1,14 +1,18 @@
 //! Session-bus watcher: the now-playing track from any MPRIS player (Spotify
 //! preferred, then whatever is playing), and — in screensaver mode — whether the
-//! KDE locker has taken over. Polled once a second on its own thread.
+//! KDE locker has taken over. Re-read only when a player or the locker signals a
+//! change, so an idle bus costs no wakeups.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use zbus::blocking::{Connection, Proxy, fdo::DBusProxy, proxy::Builder};
+use zbus::blocking::{Connection, MessageIterator, Proxy, fdo::DBusProxy, proxy::Builder};
+use zbus::message::Type;
 use zbus::proxy::CacheProperties;
 use zbus::zvariant::OwnedValue;
+use zbus::MatchRule;
 
 const PATH: &str = "/org/mpris/MediaPlayer2";
 const PLAYER: &str = "org.mpris.MediaPlayer2.Player";
@@ -19,13 +23,10 @@ pub struct Track {
     pub title: String,
     pub artist: String,
     pub album: String,
-    pub art_url: String,
     pub length: f64,
     pub position: f64,
     pub status: String,
     pub at: Option<Instant>,
-    /// Bumps whenever the track (player, title or art) changes.
-    pub version: u64,
 }
 
 impl Track {
@@ -111,11 +112,7 @@ fn pick_player(conn: &Connection) -> Option<String> {
 
 fn poll(conn: &Connection, track: &Mutex<Track>) {
     let Some(name) = pick_player(conn) else {
-        let mut t = track.lock().unwrap();
-        if !t.player.is_empty() {
-            let v = t.version + 1;
-            *t = Track { version: v, ..Default::default() };
-        }
+        *track.lock().unwrap() = Track::default();
         return;
     };
     let Some(px) = player_proxy(conn, &name) else { return };
@@ -123,17 +120,9 @@ fn poll(conn: &Connection, track: &Mutex<Track>) {
     let md: HashMap<String, OwnedValue> = px.get_property("Metadata").unwrap_or_default();
     let status: String = px.get_property("PlaybackStatus").unwrap_or_default();
     let pos: i64 = px.get_property("Position").unwrap_or(0);
-    let title = md_str(&md, "xesam:title");
-    let art = md_str(&md, "mpris:artUrl");
     let mut t = track.lock().unwrap();
-    if (name.as_str(), title.as_str(), art.as_str())
-        != (t.player.as_str(), t.title.as_str(), t.art_url.as_str())
-    {
-        t.version += 1;
-    }
     t.player = name.clone();
-    t.title = title;
-    t.art_url = art;
+    t.title = md_str(&md, "xesam:title");
     t.artist = md_strs(&md, "xesam:artist");
     t.album = md_str(&md, "xesam:album");
     t.length = md_len(&md);
@@ -155,19 +144,68 @@ fn locker_active(conn: &Connection) -> bool {
     .unwrap_or(false)
 }
 
+/// Ask the bus for the signals that mean "re-read": a player's properties or
+/// position changing, a player appearing or leaving, the locker toggling.
+fn subscribe(conn: &Connection, watch_locker: bool) -> zbus::Result<()> {
+    let bus = DBusProxy::new(conn)?;
+    let sig = || MatchRule::builder().msg_type(Type::Signal);
+    bus.add_match_rule(
+        sig().interface("org.freedesktop.DBus.Properties")?.member("PropertiesChanged")?.path(PATH)?.arg(0, PLAYER)?.build(),
+    )?;
+    bus.add_match_rule(sig().interface(PLAYER)?.member("Seeked")?.path(PATH)?.build())?;
+    bus.add_match_rule(
+        sig()
+            .sender("org.freedesktop.DBus")?
+            .interface("org.freedesktop.DBus")?
+            .member("NameOwnerChanged")?
+            .arg0ns("org.mpris.MediaPlayer2")?
+            .build(),
+    )?;
+    if watch_locker {
+        bus.add_match_rule(sig().interface("org.freedesktop.ScreenSaver")?.member("ActiveChanged")?.build())?;
+    }
+    Ok(())
+}
+
 impl Watcher {
     pub fn start(watch_locker: bool) -> Watcher {
         let track = Arc::new(Mutex::new(Track::default()));
         let locked = Arc::new(AtomicBool::new(false));
         let conn = Connection::session().ok();
         if let Some(conn) = conn.clone() {
+            // The reader only forwards signals and never calls the bus itself, so it
+            // always drains the connection while the poller waits on replies.
+            let (tx, rx) = mpsc::channel::<()>();
+            let msgs = MessageIterator::from(&conn);
+            let subscribed = subscribe(&conn, watch_locker).is_ok();
+            let l = locked.clone();
+            std::thread::spawn(move || {
+                for m in msgs.flatten() {
+                    if m.message_type() != Type::Signal {
+                        continue;
+                    }
+                    if m.header().member().is_some_and(|n| n == "ActiveChanged") {
+                        if m.body().deserialize::<bool>().unwrap_or(false) {
+                            l.store(true, Ordering::Relaxed);
+                        }
+                    } else if tx.send(()).is_err() {
+                        return;
+                    }
+                }
+            });
+            // Without signals fall back to polling each second; with them, a slow
+            // recheck covers a player that forgets to announce something.
+            let every = Duration::from_secs(if subscribed { 30 } else { 1 });
             let (t, l) = (track.clone(), locked.clone());
             std::thread::spawn(move || loop {
                 poll(&conn, &t);
                 if watch_locker && locker_active(&conn) {
                     l.store(true, Ordering::Relaxed);
                 }
-                std::thread::sleep(Duration::from_millis(1000));
+                if let Err(mpsc::RecvTimeoutError::Disconnected) = rx.recv_timeout(every) {
+                    std::thread::sleep(every);
+                }
+                while rx.try_recv().is_ok() {} // one re-read covers a burst
             });
         }
         Watcher { track, locked, conn }
@@ -178,18 +216,12 @@ impl Watcher {
     }
 
     /// PlayPause / Next / Previous on the current player (interactive mode keys).
+    /// The player's PropertiesChanged signal brings the new state back.
     pub fn control(&self, method: &str) {
         let (Some(conn), name) = (&self.conn, self.snapshot().player) else { return };
         if name.is_empty() {
             return;
         }
         let _ = conn.call_method(Some(name.as_str()), PATH, Some(PLAYER), method, &());
-        if let Some(conn) = self.conn.clone() {
-            let t = self.track.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(150));
-                poll(&conn, &t);
-            });
-        }
     }
 }

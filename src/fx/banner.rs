@@ -170,7 +170,7 @@ impl Banner {
     }
 
     /// A music cycle's stops: the theme's own, a neon set (likelier the
-    /// busier it gets), or the album's, saturated.
+    /// busier it gets), or the base palette, saturated.
     fn pick_stops(&mut self, cx: &Ctx, theme: Option<Theme>) -> Vec<Rgb> {
         let Some(t) = theme else { return cx.palette.to_vec() };
         if let Some(p) = t.palette() {

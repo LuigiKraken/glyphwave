@@ -2,7 +2,6 @@
 //! terminaltexteffects-style animations; while music plays each cycle gets a
 //! theme that makes the banner react to the sound, with a now-playing corner.
 
-mod art;
 mod audio;
 mod canvas;
 mod color;
@@ -28,7 +27,7 @@ USAGE: glyphwave [options]
                     takes over (for the idle launcher)
   --demo            play a built-in synthetic track instead of the sound card
   --idle            never use the music themes
-  --fps N           frame rate (default 60)
+  --fps N           frame rate (default 30)
   --banner FILE     banner text (default ~/.local/share/kde-screensaver/screensaver.txt)
   --frames N        exit after N frames (testing)
   --size WxH        render size when stdout isn't a terminal (testing)
@@ -63,7 +62,7 @@ fn opts() -> Opts {
         screensaver: false,
         demo: false,
         idle: false,
-        fps: 60.0,
+        fps: 30.0,
         banner: format!("{home}/.local/share/kde-screensaver/screensaver.txt"),
         frames: None,
         size: None,
@@ -82,7 +81,7 @@ fn opts() -> Opts {
             "--debug" => o.debug = true,
             "--trace" => o.trace = true,
             "--theme" => o.theme = args.next(),
-            "--fps" => o.fps = args.next().and_then(|v| v.parse().ok()).unwrap_or(60.0f32).clamp(5.0, 240.0),
+            "--fps" => o.fps = args.next().and_then(|v| v.parse().ok()).unwrap_or(30.0f32).clamp(5.0, 240.0),
             "--banner" => o.banner = args.next().unwrap_or_default(),
             "--frames" => o.frames = args.next().and_then(|v| v.parse().ok()),
             "--size" => {
@@ -121,7 +120,6 @@ fn main() {
     let tty_in = term::stdin_is_tty();
     let mut term = term::Term::enter(o.screensaver);
     let watcher = mpris::Watcher::start(o.screensaver);
-    let mut artl = art::ArtLoader::new();
     let mut cap = audio::Capture::new();
     if o.demo {
         audio::start_synth(cap.ring.clone());
@@ -142,9 +140,8 @@ fn main() {
 
     let (mut w, mut h) = o.size.unwrap_or_else(term::size);
     let mut cv = Canvas::new(w, h);
-    let mut palette = fallback_palette();
-    let mut grad = Gradient::looping(&palette);
-    let mut art_version = u64::MAX;
+    let palette = fallback_palette();
+    let grad = Gradient::looping(&palette);
 
     let mut music = Fader::default();
     let mut label_f = Fader::default();
@@ -226,15 +223,7 @@ fn main() {
         }
         an.set_bars(spec.bars_for(w));
 
-        // now playing + palette
         let track = watcher.snapshot();
-        artl.request(track.version, &track.art_url);
-        let a = artl.get();
-        if a.version != art_version {
-            art_version = a.version;
-            palette = a.palette;
-            grad = Gradient::looping(&palette);
-        }
 
         // audio: capture while something plays (or the demo), stop after 10 s
         let playing = o.demo || track.playing();
