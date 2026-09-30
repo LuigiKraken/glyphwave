@@ -173,6 +173,25 @@ released yet. Planned before the first release:
 - **A recording at the top of this README,** so you can see it move before
   reading anything.
 
+Once released, getting it running will look like this:
+
+1. **Download.** Paste one line into a terminal. It puts a single file in
+   your home folder, with no compiling and no password.
+2. **Try it.** Type `glyphwave`. It plays right there in the terminal,
+   dancing if music is on. `q` quits.
+3. **Set it up.** Type `glyphwave setup`. It works out your desktop and asks
+   four questions, each with a default: when to start, what comes after,
+   battery or not, and which banner.
+4. **Confirm.** Setup lists exactly which files it will write or change, and
+   does nothing until you say yes.
+5. **Done.** From then on it fades in when you're away and goes away when
+   you move the mouse or press a key. The music keys skip songs without
+   waking it, calls show who's calling, and your computer locks or sleeps
+   when you chose.
+
+To change your answers, run `glyphwave setup` again. To remove it, run
+`glyphwave setup --remove` and then delete the one downloaded file.
+
 ## How it works
 
 | File | What |
