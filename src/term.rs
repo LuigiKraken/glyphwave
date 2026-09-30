@@ -86,6 +86,48 @@ pub fn poll_input(timeout_ms: i32, stdin: bool, buf: &mut Vec<u8>) {
     }
 }
 
+/// The keys that drive the player without waking the screensaver: - previous,
+/// + next, Enter play/pause. Terminals send the numpad ones as the same bytes.
+pub fn is_media(b: u8) -> bool {
+    matches!(b, b'-' | b'+' | b'\r' | b'\n')
+}
+
+/// Whether screensaver input should wake the screen. Everything does except
+/// the music keys and function keys: the media keys live on them, and with
+/// Fn-lock the other way round a press arrives as F1–F12 instead of reaching
+/// the desktop.
+pub fn wakes(mut b: &[u8]) -> bool {
+    while !b.is_empty() {
+        if is_media(b[0]) {
+            b = &b[1..];
+            continue;
+        }
+        match fkey_len(b) {
+            Some(n) => b = &b[n..],
+            None => return true,
+        }
+    }
+    false
+}
+
+/// Length of the function-key sequence at the start of `b`, if there is one:
+/// ESC O P..S, ESC [ 1;m P..S (F1–F4), ESC [ n(;m) ~ for F1–F12 in the xterm
+/// and rxvt numbering, ESC [ [ A..E (Linux console).
+fn fkey_len(b: &[u8]) -> Option<usize> {
+    match b {
+        [0x1b, b'O', b'P'..=b'S', ..] => return Some(3),
+        [0x1b, b'[', b'[', b'A'..=b'E', ..] => return Some(4),
+        [0x1b, b'[', b'1', b';', b'0'..=b'9', b'P'..=b'S', ..] => return Some(6),
+        [0x1b, b'[', rest @ ..] => {
+            let end = rest.iter().position(|&c| !(c.is_ascii_digit() || c == b';'))?;
+            let n: u32 = std::str::from_utf8(&rest[..end]).ok()?.split(';').next()?.parse().ok()?;
+            let fkey = matches!(n, 11..=15 | 17..=21 | 23 | 24);
+            return (rest[end] == b'~' && fkey).then_some(end + 3);
+        }
+        _ => None,
+    }
+}
+
 pub fn stdin_is_tty() -> bool {
     unsafe { libc::isatty(STDIN) == 1 }
 }
@@ -94,4 +136,23 @@ pub fn write_all(b: &[u8]) {
     let mut out = std::io::stdout().lock();
     let _ = out.write_all(b);
     let _ = out.flush();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wakes;
+
+    #[test]
+    fn function_and_music_keys_do_not_wake() {
+        for k in [&b"-"[..], b"+", b"\r", b"+\r-", b"\x1bOP", b"\x1bOS", b"\x1b[1;2Q", b"\x1b[15~", b"\x1b[24;5~", b"\x1b[11~", b"\x1b[[A", b"\x1bOP\x1b[17~"] {
+            assert!(!wakes(k), "{k:?}");
+        }
+    }
+
+    #[test]
+    fn everything_else_wakes() {
+        for k in [&b"a"[..], b" ", b"\x1b", b"\x03", b"\x1b[A", b"\x1b[3~", b"\x1b[5~", b"\x1b[<35;10;4M", b"\x1b[15~x", b"-a", b"="] {
+            assert!(wakes(k), "{k:?}");
+        }
+    }
 }

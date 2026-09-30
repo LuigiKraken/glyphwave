@@ -6,6 +6,7 @@
 use std::io::Read;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 pub const RATE: u32 = 48_000;
 pub const RING: usize = 16_384; // per channel, > the largest FFT (8192)
@@ -36,12 +37,14 @@ impl Ring {
 
 pub struct Capture {
     child: Option<Child>,
+    /// When a failed or dead `parec` may be tried again.
+    retry: Option<Instant>,
     pub ring: Arc<Mutex<Ring>>,
 }
 
 impl Capture {
     pub fn new() -> Capture {
-        Capture { child: None, ring: Arc::new(Mutex::new(Ring::new())) }
+        Capture { child: None, retry: None, ring: Arc::new(Mutex::new(Ring::new())) }
     }
 
     pub fn running(&mut self) -> bool {
@@ -52,10 +55,12 @@ impl Capture {
     }
 
     pub fn start(&mut self) {
-        if self.running() {
+        if self.running() || self.retry.is_some_and(|r| Instant::now() < r) {
             return;
         }
         self.stop();
+        // without parec (or a sound server) don't respawn it every frame
+        self.retry = Some(Instant::now() + Duration::from_secs(5));
         let child = Command::new("parec")
             .args([
                 "-d",
@@ -103,6 +108,7 @@ impl Capture {
     }
 
     pub fn stop(&mut self) {
+        self.retry = None;
         if let Some(mut c) = self.child.take() {
             let _ = c.kill();
             let _ = c.wait();

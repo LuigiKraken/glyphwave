@@ -85,6 +85,9 @@ cargo build --release
 
 Keys (interactive): `q` quit, `space` play/pause, `n`/`p` next/previous,
 `v` next theme (or next text effect), `i` toggle idle/music, `d` debug overlay.
+`-`/`+`/`Enter` previous/next/play-pause, also in `--screensaver` without
+waking it (the numpad keys send the same bytes). Mouse motion and every other
+key wake the screensaver, except F1–F12, where laptop media keys sit.
 
 Options: `--fps N` (default 30), `--banner FILE`, `--idle`,
 `--theme fire` (always use one theme; `--help` lists them),

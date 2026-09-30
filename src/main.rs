@@ -23,8 +23,8 @@ glyphwave — terminal screensaver + music visualizer
 
 USAGE: glyphwave [options]
 
-  --screensaver     exit on any key or mouse motion, or when the KDE locker
-                    takes over (for the idle launcher)
+  --screensaver     exit on mouse motion, on any key but F1–F12 and the
+                    music keys, or when the KDE locker takes over (idle launcher)
   --demo            play a built-in synthetic track instead of the sound card
   --idle            never use the music themes
   --fps N           frame rate (default 30)
@@ -40,6 +40,8 @@ USAGE: glyphwave [options]
 
 KEYS (interactive): q quit · space play/pause · n next · p previous ·
   v next theme/effect · i idle/music · d debug
+MUSIC KEYS (also in --screensaver, without waking it): - previous ·
+  + next · Enter play/pause
 ";
 
 struct Opts {
@@ -175,17 +177,19 @@ fn main() {
             if !input.is_empty() {
                 let t = start.elapsed().as_secs_f32();
                 if o.screensaver {
-                    if t > grace {
+                    if t <= grace {
+                        input.clear(); // swallow the launch keypress
+                    } else if term::wakes(&input) {
                         break 'main;
                     }
-                    input.clear(); // swallow the launch keypress / a nudged mouse
+                    input.retain(|&b| term::is_media(b)); // drop F-key sequences
                 }
                 for &b in &input {
                     match b {
                         b'q' | 3 | 27 => break 'main,
-                        b' ' => watcher.control("PlayPause"),
-                        b'n' => watcher.control("Next"),
-                        b'p' => watcher.control("Previous"),
+                        b' ' | b'\r' | b'\n' => watcher.control("PlayPause"),
+                        b'n' | b'+' => watcher.control("Next"),
+                        b'p' | b'-' => watcher.control("Previous"),
                         b'v' => {
                             if banner.theme().is_some() {
                                 dir.next()
