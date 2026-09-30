@@ -58,6 +58,8 @@ pub struct Banner {
     hold: Hold,
     react: f32,
     rng: Rng,
+    /// The running cycle's colour stops (the letters' diagonal gradient).
+    stops: Vec<Rgb>,
 }
 
 impl Banner {
@@ -108,6 +110,7 @@ impl Banner {
             hold: Hold::new(Theme::Pulse),
             react: 0.0,
             rng: Rng::seeded(),
+            stops: Vec::new(),
         }
     }
 
@@ -204,6 +207,12 @@ impl Banner {
         self.oy + self.bh as i32
     }
 
+    /// The running cycle's colour stops and the banner's columns on screen
+    /// (left edge, width), so other layers can colour to match the letters.
+    pub fn colours(&self) -> (&[Rgb], i32, usize) {
+        (&self.stops, self.ox, self.bw)
+    }
+
     /// True while the matrix intro runs (the rain layer joins in).
     pub fn wants_rain(&self) -> bool {
         matches!(self.phase, Phase::Intro) && self.current == Some(Kind::Matrix)
@@ -211,8 +220,8 @@ impl Banner {
 
     fn start_cycle(&mut self, cx: &Ctx, music: bool, dir: &mut Director) {
         self.theme = music.then(|| dir.start(cx.f));
-        let fin = self.theme.and_then(|t| t.palette()).unwrap_or_else(|| Gradient::new(cx.palette));
-        self.finals(&fin);
+        self.stops = self.theme.and_then(|t| t.palette()).unwrap_or_else(|| cx.palette.to_vec());
+        self.finals(&Gradient::new(&self.stops));
         for c in &mut self.chars {
             c.pos = c.home;
             c.vel = (0.0, 0.0);

@@ -30,7 +30,7 @@ use super::effects::{CIPHER, Kind};
 use super::spectrum::Spectrum;
 use super::{Ctx, KATAKANA, Rng};
 use crate::canvas::Canvas;
-use crate::color::{Gradient, Rgb, WHITE};
+use crate::color::{Rgb, WHITE};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Theme {
@@ -91,9 +91,9 @@ impl Theme {
         }
     }
 
-    /// The letters' final colours; None = the album palette.
-    pub fn palette(self) -> Option<Gradient> {
-        let g = |s: &[&str]| Some(Gradient::new(&s.iter().map(|h| Rgb::hex(h)).collect::<Vec<_>>()));
+    /// The letters' final colour stops; None = the album palette.
+    pub fn palette(self) -> Option<Vec<Rgb>> {
+        let g = |s: &[&str]| Some(s.iter().map(|h| Rgb::hex(h)).collect::<Vec<_>>());
         match self {
             Theme::Shock => g(&BEAMS[..2]),
             Theme::Wave => g(&WAVES),

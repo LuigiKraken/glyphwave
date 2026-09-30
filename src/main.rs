@@ -306,7 +306,8 @@ fn main() {
         lift.step(dt, 0.6);
         if ribbon_f.on() && banner.fits {
             let room = (h as i32 - banner.bottom() - 1).max(0) as usize;
-            ribbon.draw(&mut cv, &cx, room, ribbon_f.a(), lift.a());
+            let (stops, ox, bw) = banner.colours();
+            ribbon.draw(&mut cv, &cx, room, ribbon_f.a(), lift.a(), stops, (ox, bw));
         }
         banner.draw(&mut cv, &cx, want_music, &mut dir, &mut spec);
         fx::label::draw(&mut cv, &cx, &track, label_f.a());

@@ -34,8 +34,11 @@ between.
     skyline with a dim reflection, on through intros, outros and the gaps
     between them, so the screen never goes still while the music plays. How
     much it does follows the music's intensity. Quiet music gets a low, dim,
-    still ribbon. Busy music gets a tall one that steps colour on the beat,
+    still ribbon. Busy music gets a tall one that brightens on the beat,
     flashes on kicks, throws hi-hat sparks and pulses outward on the downbeat.
+    It wears the banner's colours (each column takes the colour of the letters
+    above it, crossfading when a new cycle changes the palette). Spikes run
+    into the headroom under the banner on a soft limit instead of flat-topping.
     It lifts a little between holds to carry the transition, and it gives way
     to the `floor` theme's own bars.
 
