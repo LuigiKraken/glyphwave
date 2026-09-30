@@ -464,10 +464,12 @@ impl Hold {
     fn wave(&mut self, cv: &mut Canvas, cx: &Ctx, chars: &[Ch], g: Geom, react: f32, look: &Look) {
         let f = cx.f;
         let (w, h) = (cx.w as i32, cx.h as i32);
-        // the fields either side of the banner, one column of air between
+        // the fields either side of the banner, one column of air between;
+        // each wave runs on to the middle, fading out behind the letters
         let left_end = g.ox - 2; // last column of the left field
         let right_start = g.ox + g.bw as i32 + 1;
-        let n = (left_end + 1).max(w - right_start).max(1) as usize;
+        let reach = (left_end + 1).max(w - right_start).max(1) as f32;
+        let n = (w as usize).div_ceil(2).max(1);
         if self.hist.len() != n {
             self.hist = vec![(0.0, 0.0); n];
         }
@@ -489,18 +491,24 @@ impl Hold {
         let cy = g.oy as f32 + g.bh as f32 / 2.0;
         let amp = (g.bh as f32 * 0.5 + 1.5 + 3.5 * f.intensity).min(cy - 1.0).min(h as f32 - cy - 1.0).max(1.0) * react;
         for k in 0..n {
-            for (x, v) in [(k as i32, self.hist[k].0), (w - 1 - k as i32, self.hist[k].1)] {
-                let in_field = x <= left_end || x >= right_start;
-                if !in_field || x < 0 || x >= w {
+            let (xl, xr) = (k as i32, w - 1 - k as i32);
+            for (x, v, depth) in [(xl, self.hist[k].0, xl - left_end), (xr, self.hist[k].1, right_start - xr)] {
+                if x < 0 || x >= w || (k > 0 && xl >= xr) {
+                    continue;
+                }
+                // shrink and fade from a few cells before the letters on, so
+                // the wave slips behind them instead of hitting a wall
+                let fade = (-((depth + 3).max(0) as f32) / 4.0).exp();
+                if fade < 0.04 {
                     continue;
                 }
                 // mirrored about the banner's middle row, in half cells
-                let half = v * amp;
+                let half = v * amp * (0.3 + 0.7 * fade);
                 if half < 0.25 {
                     continue;
                 }
-                let near = k as f32 / n as f32; // 0 at the edge .. 1 at the banner
-                let base = look.at(near).scale(0.45 + 0.55 * v);
+                let near = (k as f32 / reach).min(1.0); // 0 at the edge .. 1 at the banner
+                let base = look.at(near).scale((0.45 + 0.55 * v) * fade);
                 let top = cy - half;
                 let bot = cy + half;
                 for y in top.floor() as i32..=bot.ceil() as i32 - 1 {
