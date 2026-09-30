@@ -36,7 +36,7 @@ USAGE: glyphwave [options]
   --debug           feature overlay (bpm, onsets, theme)
   --trace           print beat/onset/drop events to stderr
   --theme NAME      always use one music theme (levels pulse shock wave fire
-                    matrix glitch springs floor)
+                    matrix glitch springs floor bounce warp)
 
 KEYS (interactive): q quit · space play/pause · n next · p previous ·
   v next theme/effect · i idle/music · d debug
@@ -156,6 +156,7 @@ fn main() {
     let mut not_playing = 0.0f32;
     let mut rng = fx::Rng::seeded();
     let mut idle_cycle = 0u64;
+    let mut traced = String::new();
 
     let frame_dt = Duration::from_secs_f32(1.0 / o.fps);
     let start = Instant::now();
@@ -300,8 +301,10 @@ fn main() {
         lift.step(dt, 0.6);
         if ribbon_f.on() && banner.fits {
             let room = (h as i32 - banner.bottom() - 1).max(0) as usize;
-            let (stops, ox, bw) = banner.colours();
-            ribbon.draw(&mut cv, &cx, room, ribbon_f.a(), lift.a(), stops, (ox, bw));
+            // the mirror along the top, except where the banner flies there
+            let ceil = if holding == Some(fx::themes::Theme::Bounce) { 0 } else { (banner.top() - 1).max(0) as usize };
+            let (look, ox, bw) = banner.look();
+            ribbon.draw(&mut cv, &cx, room, ceil, ribbon_f.a(), lift.a(), look, (ox, bw));
         }
         banner.draw(&mut cv, &cx, want_music, &mut dir, &mut spec);
         fx::label::draw(&mut cv, &cx, &track, label_f.a());
@@ -329,6 +332,10 @@ fn main() {
             cv.text(0, h as i32 - 1, &s, Rgb(200, 200, 200));
         }
 
+        if o.trace && dir.name != traced {
+            traced = dir.name.clone();
+            eprintln!("{t:7.2} theme {traced} (int {:.2})", f.intensity);
+        }
         let out = cv.flush();
         bytes += out.len() as u64;
         term::write_all(out.as_bytes());

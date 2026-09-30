@@ -18,8 +18,9 @@ between.
     downbeat runs a sweep, and hi-hats sparkle single letters.
   - `shock`: kicks send rings out from the centre that jolt the letters;
     snares fire a beam along a row.
-  - `wave`: the waveform runs across the screen and through the banner's
-    columns.
+  - `wave`: a mirrored waveform rolls in from both screen edges toward the
+    banner, faster the busier the music. The letters stay put and light up
+    as each swell arrives.
   - `fire`: ASCII fire rises off the letters. Flame height follows each
     column's band, and kicks make it surge.
   - `matrix`: katakana rain whose speed follows loudness, with new streams on
@@ -29,6 +30,11 @@ between.
   - `springs`: every letter hangs on a spring. Kicks push them and the bass
     bends the banner.
   - `floor`: the banner holds still over a cava bar floor.
+  - `bounce`: the whole banner flies around the screen, faster with the
+    music, with kicks swerving it and a dim trail behind. Each wall it hits
+    jumps the palette.
+  - `warp`: hyperspace. Glyphs stream out from the banner's edges and speed
+    up as they go. How many follows intensity; kicks burst and drops flood.
 
   - Under all of it runs a **ribbon** along the bottom edge: a mirrored stereo
     skyline with a dim reflection, on through intros, outros and the gaps
@@ -37,14 +43,28 @@ between.
     still ribbon. Busy music gets a tall one that brightens on the beat,
     flashes on kicks, throws hi-hat sparks and pulses outward on the downbeat.
     It wears the banner's colours (each column takes the colour of the letters
-    above it, crossfading when a new cycle changes the palette). Spikes run
-    into the headroom under the banner on a soft limit instead of flat-topping.
-    It lifts a little between holds to carry the transition, and it gives way
-    to the `floor` theme's own bars.
+    above it). Spikes run into the headroom under the banner on a soft limit
+    instead of flat-topping. Once the music is really going, a mirror image
+    grows down from the top edge too, flipped left for right. It lifts a
+    little between holds to carry the transition, and it gives way to the
+    `floor` theme's own bars.
+  - **Colours** are shared: the banner, the theme's accents and the ribbon
+    all read one palette, so they always match. Each cycle gets a neon
+    palette (more likely the busier the music) or the album's, saturated;
+    `fire`, `matrix` and `glitch` keep their own. While a theme holds, the
+    palette steps on every beat: a little when it's calm, big jumps (and a
+    bigger one on the downbeat) when it's busy.
+  - **Switching** follows the music rather than a clock. A lull (a
+    breakdown, a breath between sections) fades out: the outro, then the
+    next intro straight away, with a calmer pick. A high (a drop, or a surge
+    in level on a kick) cuts: the next, busier theme takes over at once
+    under a flash, with no outro or intro. A section change cuts when the
+    music is busy and otherwise waits for a lull. The 16/32-bar timer only
+    marks a hold as due.
 
   Everything is drawn in plain character cells: no half-block backdrops, no
   stacked layers. Themes without a fixed palette take their colours from the
-  album art. Calm music draws calm themes and loud music busy ones. While a
+  album art or a neon set. Calm music draws calm themes and loud music busy ones. While a
   track plays, the top-left corner shows its title, artist · album, and
   progress with the length. When playback pauses or stops, the corner stays
   empty.

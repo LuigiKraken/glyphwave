@@ -5,16 +5,19 @@
 //! A continuous stereo skyline, mirrored like cava (bass in the middle, left
 //! channel to the left), with a dim reflection hanging under its baseline.
 //! It wears the banner's colours: each column takes the colour of the
-//! letters above it, and crossfades when a new cycle brings a new palette.
+//! letters above it, read from the shared `Look`, so it steps with the
+//! palette on the beat and crossfades when a new cycle brings a new one.
 //! How much it does follows `intensity`: quiet music gets a low, dim, still
 //! ribbon; busy music a tall one that brightens on the beat, flashes on
 //! kicks, throws hi-hat sparks and sends a pulse outward on each downbeat.
 //! Between holds it lifts a little, to carry the transition. Spikes run into
 //! the headroom under the banner on a soft limit, so they never flat-top.
+//! Once the music is really going, a mirror image grows down from the top
+//! edge too, flipped left for right.
 
-use super::{BLOCKS, Ctx, Rng};
+use super::{BLOCKS, Ctx, Look, Rng};
 use crate::canvas::Canvas;
-use crate::color::{Gradient, Rgb, WHITE};
+use crate::color::WHITE;
 
 struct Spark {
     x: i32,
@@ -28,12 +31,8 @@ pub struct Ribbon {
     pulse: f32,
     sparks: Vec<Spark>,
     rng: Rng,
-    /// The banner's stops as last seen, their gradient, the one before it,
-    /// and how far the crossfade between the two has got.
-    stops: Vec<Rgb>,
-    cur: Option<Gradient>,
-    prev: Option<Gradient>,
-    blend: f32,
+    /// How far the ceiling mirror is grown in (0..1).
+    mirror: f32,
 }
 
 /// A 0..1 series sampled at u in 0..1 with linear interpolation.
@@ -54,42 +53,27 @@ impl Ribbon {
             pulse: -1.0,
             sparks: Vec::new(),
             rng: Rng::seeded(),
-            stops: Vec::new(),
-            cur: None,
-            prev: None,
-            blend: 1.0,
+            mirror: 0.0,
         }
     }
 
-    /// The banner's colour at letter-gradient position u, mid-crossfade.
-    fn colour(&self, u: f32) -> Rgb {
-        let Some(cur) = &self.cur else { return WHITE };
-        let c = cur.at(u);
-        match &self.prev {
-            Some(p) if self.blend < 1.0 => p.at(u).mix(c, self.blend),
-            _ => c,
-        }
-    }
-
-    /// Draw into the bottom `room` rows at opacity `a`; `lift` (0..1) is the
-    /// extra height and life it gets while the banner is between holds.
-    /// `stops` and `span` (left edge, width) are the banner's colours and
-    /// columns, so the ribbon under each letter matches it.
-    pub fn draw(&mut self, cv: &mut Canvas, cx: &Ctx, room: usize, a: f32, lift: f32, stops: &[Rgb], span: (i32, usize)) {
+    /// Draw into the bottom `room` rows at opacity `a`, and the mirror into
+    /// the top `ceil` rows; `lift` (0..1) is the extra height and life it
+    /// gets while the banner is between holds. `look` and `span` (left edge,
+    /// width) are the banner's colours and columns, so the ribbon under each
+    /// letter matches it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw(&mut self, cv: &mut Canvas, cx: &Ctx, room: usize, ceil: usize, a: f32, lift: f32, look: &Look, span: (i32, usize)) {
         let f = cx.f;
         let (w, h) = (cx.w as i32, cx.h as i32);
         let dt = cx.dt;
-        if !stops.is_empty() && stops != self.stops.as_slice() {
-            self.stops = stops.to_vec();
-            self.prev = self.cur.take();
-            self.cur = Some(Gradient::new(stops));
-            self.blend = if self.prev.is_some() { 0.0 } else { 1.0 };
-        }
-        self.blend = (self.blend + dt / 1.2).min(1.0);
-        if room < 3 || f.left.is_empty() || w < 8 || self.cur.is_none() {
+        if room < 3 || f.left.is_empty() || w < 8 {
             return;
         }
         let int = (f.intensity + 0.2 * lift).min(1.0);
+        let want = ((f.intensity - 0.55) / 0.25).clamp(0.0, 1.0);
+        self.mirror += (want - self.mirror) * (1.0 - (-dt / 0.8).exp());
+        let colour = |x: f32| look.at(((x - span.0 as f32) / span.1.max(1) as f32 * 0.8 + 0.2).clamp(0.0, 1.0));
 
         // a brightness bump on every beat, a pulse on the downbeat
         if f.beat {
@@ -117,7 +101,6 @@ impl Ribbon {
         let bright = (0.4 + 0.6 * int + 0.25 * self.beat).min(1.0) * cx.light * a;
         let flash = f.kick_env.min(1.0) * ((int - 0.35) / 0.4).clamp(0.0, 1.0);
 
-        let (ox, bw) = (span.0 as f32, span.1.max(1) as f32);
         let mid = (w - 1) as f32 / 2.0;
         let lim = max_up as f32;
         let mut tops = Vec::with_capacity(w as usize);
@@ -133,7 +116,7 @@ impl Ribbon {
             let pd = if self.pulse >= 0.0 { u - self.pulse } else { 9.0 };
             let pl = (-(pd * pd) * 90.0).exp() * int;
             // the colour of the banner's bottom row above this column
-            let base_col = self.colour(((x as f32 - ox) / bw * 0.8 + 0.2).clamp(0.0, 1.0));
+            let base_col = colour(x as f32);
             for k in 0..max_up {
                 let fill = hs.saturating_sub(k * 8).min(8);
                 if fill == 0 {
@@ -159,6 +142,24 @@ impl Ribbon {
             }
         }
 
+        // the ceiling: the skyline flipped both ways, hanging from the top
+        if self.mirror > 0.02 && ceil >= 3 {
+            let lim = (ceil - 1) as f32;
+            for x in 0..w {
+                let src = tops[(w - 1 - x) as usize] as f32 / 8.0;
+                let m = (src * 0.75 * self.mirror).min(lim);
+                let base_col = colour(x as f32).scale(bright * (0.35 + 0.35 * self.mirror));
+                let mut k = 0;
+                while (k as f32) < m {
+                    let left = m - k as f32;
+                    let glyph = if left >= 1.0 { '█' } else if left >= 0.5 { '▀' } else { '▔' };
+                    let fade = 1.0 - 0.5 * k as f32 / lim.max(1.0);
+                    cv.put_lit(x, k, glyph, base_col.scale(fade).mix(WHITE, a * 0.25 * flash));
+                    k += 1;
+                }
+            }
+        }
+
         // hi-hat sparks off the skyline once the music is busy
         if f.hat > 0.15 && int > 0.35 {
             for _ in 0..(f.hat * 5.0 * int) as usize + 1 {
@@ -178,7 +179,7 @@ impl Ribbon {
         }
         for s in &self.sparks {
             let glyph = if s.life > 0.6 { '•' } else if s.life > 0.3 { '·' } else { '˙' };
-            let col = self.colour(((s.x as f32 - ox) / bw * 0.8 + 0.2).clamp(0.0, 1.0));
+            let col = colour(s.x as f32);
             cv.put_under(s.x, s.y.round() as i32, glyph, col.mix(WHITE, 0.5).scale(s.life * a * cx.light));
         }
     }

@@ -4,16 +4,21 @@
 //! outro → the next intro. While it's quiet the hold is a still banner with a
 //! specular sweep. While music plays each cycle belongs to a theme
 //! (`themes.rs`): a paired intro, the theme's palette, and a hold that
-//! reacts to the music until the director calls time. Intros and outros run
-//! a little faster with faster music, and a themed intro waits for a beat.
+//! reacts to the music until the director calls time: a fade (outro, then
+//! the next intro with no gap) or a cut (the next theme at once, under a
+//! flash). Intros and outros run faster with faster, busier music.
+//!
+//! The cycle's colours live in one `Look` that the theme and the ribbon
+//! read too, so everything on screen wears the same palette. While a theme
+//! holds, the palette steps on every beat, harder the busier the music.
 
 use super::effects::{Chars, Effect, INTROS, Kind, OUTROS, P};
 use super::spectrum::Spectrum;
 use super::themes::{Geom, Hold, Theme};
-use super::{Ctx, Rng};
+use super::{Ctx, Look, Rng};
 use crate::canvas::Canvas;
-use crate::color::{Gradient, Rgb, WHITE};
-use crate::scene::Director;
+use crate::color::{Rgb, VIVID, WHITE, saturate, vivid};
+use crate::scene::{Cue, Director};
 
 pub struct Ch {
     pub ch: char,
@@ -34,7 +39,7 @@ enum Phase {
     Outro,
 }
 
-const LEAVE: f32 = 0.4;
+const LEAVE: f32 = 0.3;
 
 pub struct Banner {
     lines: Vec<Vec<char>>,
@@ -58,8 +63,9 @@ pub struct Banner {
     hold: Hold,
     react: f32,
     rng: Rng,
-    /// The running cycle's colour stops (the letters' diagonal gradient).
-    stops: Vec<Rgb>,
+    /// The running cycle's colours, shared with the theme and the ribbon.
+    look: Look,
+    last_vivid: usize,
 }
 
 impl Banner {
@@ -110,7 +116,8 @@ impl Banner {
             hold: Hold::new(Theme::Pulse),
             react: 0.0,
             rng: Rng::seeded(),
-            stops: Vec::new(),
+            look: Look::new(&crate::color::fallback_palette()),
+            last_vivid: usize::MAX,
         }
     }
 
@@ -140,13 +147,32 @@ impl Banner {
         self.phase = Phase::Gap(0.2); // restart the cycle on a resize
     }
 
-    fn finals(&mut self, grad: &Gradient) {
+    /// Each letter's colour from the look: a diagonal gradient, like TTE's.
+    fn finals(&mut self) {
         let bw = self.bw.max(1) as f32;
         let bh = self.bh.max(1) as f32;
         for c in &mut self.chars {
-            // diagonal final gradient, like TTE's default
             let u = (c.dx as f32 / bw * 0.8 + c.dy as f32 / bh * 0.2).clamp(0.0, 1.0);
-            c.fin = grad.at(u);
+            c.fin = self.look.at(u);
+        }
+    }
+
+    /// A music cycle's stops: the theme's own, a neon set (likelier the
+    /// busier it gets), or the album's, saturated.
+    fn pick_stops(&mut self, cx: &Ctx, theme: Option<Theme>) -> Vec<Rgb> {
+        let Some(t) = theme else { return cx.palette.to_vec() };
+        if let Some(p) = t.palette() {
+            return p;
+        }
+        if self.rng.chance(0.35 + 0.55 * cx.f.intensity) {
+            let mut i = self.rng.below(VIVID.len());
+            if i == self.last_vivid {
+                i = (i + 1) % VIVID.len();
+            }
+            self.last_vivid = i;
+            vivid(i)
+        } else {
+            saturate(cx.palette)
         }
     }
 
@@ -207,10 +233,15 @@ impl Banner {
         self.oy + self.bh as i32
     }
 
-    /// The running cycle's colour stops and the banner's columns on screen
-    /// (left edge, width), so other layers can colour to match the letters.
-    pub fn colours(&self) -> (&[Rgb], i32, usize) {
-        (&self.stops, self.ox, self.bw)
+    /// The running cycle's colours and the banner's columns on screen (left
+    /// edge, width), so other layers can colour to match the letters.
+    pub fn look(&self) -> (&Look, i32, usize) {
+        (&self.look, self.ox, self.bw)
+    }
+
+    /// First screen row of the banner.
+    pub fn top(&self) -> i32 {
+        self.oy
     }
 
     /// True while the matrix intro runs (the rain layer joins in).
@@ -220,8 +251,9 @@ impl Banner {
 
     fn start_cycle(&mut self, cx: &Ctx, music: bool, dir: &mut Director) {
         self.theme = music.then(|| dir.start(cx.f));
-        self.stops = self.theme.and_then(|t| t.palette()).unwrap_or_else(|| cx.palette.to_vec());
-        self.finals(&Gradient::new(&self.stops));
+        let stops = self.pick_stops(cx, self.theme);
+        self.look.set(&stops, 0.0);
+        self.finals();
         for c in &mut self.chars {
             c.pos = c.home;
             c.vel = (0.0, 0.0);
@@ -233,6 +265,39 @@ impl Banner {
         self.phase = Phase::Intro;
     }
 
+    /// A cut: the next theme takes over the hold at once, under a flash.
+    fn cut(&mut self, cx: &Ctx, dir: &mut Director) {
+        let t = dir.start(cx.f);
+        self.theme = Some(t);
+        let stops = self.pick_stops(cx, Some(t));
+        self.look.set(&stops, 0.35);
+        self.look.flash = 1.0;
+        self.hold = Hold::new(t);
+        self.react = self.react.min(0.5);
+        for c in &mut self.chars {
+            c.pos = c.home;
+            c.vel = (0.0, 0.0);
+        }
+    }
+
+    /// While a theme holds: the palette steps on the beat, a little when
+    /// it's calm, by big jumps when it's busy; the downbeat jumps further.
+    fn step_look(&mut self, cx: &Ctx) {
+        let f = cx.f;
+        let hype = ((f.intensity - 0.35) / 0.5).clamp(0.0, 1.0);
+        if f.beat {
+            let mut d = 0.015 + 0.13 * hype + self.hold.theme.beat_step();
+            if f.bar_beat() == 0 && hype > 0.5 {
+                d += 0.12;
+            }
+            self.look.nudge(d);
+        }
+        self.look.nudge(cx.dt * 0.01);
+        if f.drop {
+            self.look.flash = 1.0;
+        }
+        self.finals();
+    }
     /// Advance the cycle and draw. `music` says whether the next cycle should
     /// be themed and whether a themed hold may continue.
     pub fn draw(&mut self, cv: &mut Canvas, cx: &Ctx, music: bool, dir: &mut Director, spec: &mut Spectrum) {
@@ -242,14 +307,18 @@ impl Banner {
         }
         let f = cx.f;
         let dt = cx.dt;
-        // faster music, slightly faster effects (TTE durations assume ~120 bpm)
-        let speed = if self.theme.is_some() && f.beat_conf > 0.5 { (f.bpm / 120.0).clamp(0.85, 1.4) } else { 1.0 };
+        self.look.step(dt);
+        // faster, busier music, faster effects (TTE durations assume ~120 bpm)
+        let speed = if self.theme.is_some() {
+            let tempo = if f.beat_conf > 0.5 { (f.bpm / 120.0).clamp(0.85, 1.4) } else { 1.0 };
+            tempo * (1.0 + 0.5 * f.intensity)
+        } else {
+            1.0
+        };
         match &mut self.phase {
             Phase::Gap(t) => {
                 *t -= dt;
-                // a themed intro starts on a beat when the tracker is sure of one
-                let on_beat = !music || f.beat_conf < 0.5 || f.beat || *t < -1.5;
-                if *t > 0.0 || !on_beat {
+                if *t > 0.0 {
                     return;
                 }
                 self.start_cycle(cx, music, dir);
@@ -276,8 +345,10 @@ impl Banner {
                 Some(_) => {
                     self.react = (self.react + dt / 0.8).min(1.0);
                     dir.update(f, dt);
-                    if !music || dir.cue {
+                    if !music || dir.cue == Cue::Fade {
                         self.phase = Phase::Leave(LEAVE);
+                    } else if dir.cue == Cue::Cut {
+                        self.cut(cx, dir);
                     }
                 }
             },
@@ -292,15 +363,19 @@ impl Banner {
             Phase::Outro => {
                 self.effect.step(dt * speed);
                 if self.effect.done() {
-                    self.phase = Phase::Gap(if music { 0.3 } else { self.rng.range(0.5, 1.2) });
+                    // while music plays, the next intro follows at once
+                    self.phase = Phase::Gap(if music { 0.0 } else { self.rng.range(0.5, 1.2) });
                     return;
                 }
             }
         }
         let holding = matches!(self.phase, Phase::Hold(_) | Phase::Leave(_));
         if holding && self.theme.is_some() {
+            if matches!(self.phase, Phase::Hold(_)) {
+                self.step_look(cx);
+            }
             let g = Geom { ox: self.ox, oy: self.oy, bw: self.bw, bh: self.bh };
-            self.hold.draw(cv, cx, &mut self.chars, g, spec, self.react);
+            self.hold.draw(cv, cx, &mut self.chars, g, spec, self.react, &mut self.look);
             return;
         }
         if holding {

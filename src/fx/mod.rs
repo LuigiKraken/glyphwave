@@ -12,7 +12,7 @@ pub mod ribbon;
 pub mod spectrum;
 pub mod themes;
 
-use crate::color::{Gradient, Rgb};
+use crate::color::{Gradient, Rgb, WHITE};
 use crate::dsp::Features;
 
 #[derive(Clone, Copy)]
@@ -29,6 +29,70 @@ pub struct Ctx<'a> {
     pub phase: f32,
     /// Overall brightness multiplier from loudness (0.75..1).
     pub light: f32,
+}
+
+/// The running cycle's colours, shared by the banner, its theme and the
+/// ribbon so they always match. A looping gradient over the cycle's stops,
+/// read at `u` (0..1 across the banner) plus `shift`, which the banner steps
+/// on the beat; a new palette crossfades in, and `flash` whitens everything.
+pub struct Look {
+    pub stops: Vec<Rgb>,
+    cur: Gradient,
+    prev: Option<Gradient>,
+    blend: f32,
+    fade: f32,
+    pub shift: f32,
+    target: f32,
+    pub flash: f32,
+}
+
+impl Look {
+    pub fn new(stops: &[Rgb]) -> Look {
+        Look {
+            stops: stops.to_vec(),
+            cur: Gradient::looping(stops),
+            prev: None,
+            blend: 1.0,
+            fade: 1.0,
+            shift: 0.0,
+            target: 0.0,
+            flash: 0.0,
+        }
+    }
+
+    /// Switch to new stops, crossfading over `secs` (0 = at once).
+    pub fn set(&mut self, stops: &[Rgb], secs: f32) {
+        if stops == self.stops.as_slice() {
+            return;
+        }
+        self.stops = stops.to_vec();
+        let next = Gradient::looping(stops);
+        self.prev = Some(std::mem::replace(&mut self.cur, next));
+        self.blend = if secs <= 0.0 { 1.0 } else { 0.0 };
+        self.fade = secs.max(0.01);
+    }
+
+    /// Step the colour position by `d` (eased in over ~80 ms).
+    pub fn nudge(&mut self, d: f32) {
+        self.target += d;
+    }
+
+    pub fn step(&mut self, dt: f32) {
+        self.blend = (self.blend + dt / self.fade).min(1.0);
+        self.shift += (self.target - self.shift) * (1.0 - (-dt / 0.08).exp());
+        self.flash *= (-dt / 0.25).exp();
+    }
+
+    /// The colour at u (0..1 across the banner).
+    pub fn at(&self, u: f32) -> Rgb {
+        let t = u.clamp(0.0, 1.0) * 0.5 + self.shift;
+        let c = self.cur.wrap(t);
+        let c = match &self.prev {
+            Some(p) if self.blend < 1.0 => p.wrap(t).mix(c, self.blend),
+            _ => c,
+        };
+        c.mix(WHITE, 0.7 * self.flash)
+    }
 }
 
 /// One layer's opacity, moved linearly toward a target and eased on read.

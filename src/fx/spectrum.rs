@@ -2,7 +2,7 @@
 //! bars with peak caps, laid out like cava's stereo mirror — bass in the
 //! middle, left channel to the left, right to the right.
 
-use super::{BLOCKS, Ctx};
+use super::{BLOCKS, Ctx, Look};
 use crate::canvas::Canvas;
 use crate::color::WHITE;
 
@@ -50,23 +50,23 @@ impl Spectrum {
     }
 
     /// Bars along the bottom `rows` rows of the screen (the floor theme).
-    pub fn floor(&mut self, cv: &mut Canvas, cx: &Ctx, rows: usize, a: f32) {
+    pub fn floor(&mut self, cv: &mut Canvas, cx: &Ctx, rows: usize, a: f32, look: &Look) {
         if cx.f.left.is_empty() {
             return;
         }
         self.arrange(cx);
-        self.bars(cv, cx, cx.h, rows, a);
+        self.bars(cv, cx, cx.h, rows, a, look);
     }
 
     /// Bars growing up from row `base` (exclusive), `rows` tall.
-    fn bars(&self, cv: &mut Canvas, cx: &Ctx, base: usize, rows: usize, a: f32) {
+    fn bars(&self, cv: &mut Canvas, cx: &Ctx, base: usize, rows: usize, a: f32, look: &Look) {
         let steps = rows * 8;
         let x0 = self.x0(cx.w);
         let boost = (0.8 + 0.2 * cx.f.kick_env) * cx.light * a;
         let row_col: Vec<_> = (0..rows)
-            .map(|k| cx.grad.wrap(k as f32 / rows.max(2) as f32 * 0.5 + cx.phase).scale(boost))
+            .map(|k| look.at(k as f32 / rows.max(2) as f32).scale(boost))
             .collect();
-        let cap_col = cx.palette[cx.palette.len() - 1].mix(WHITE, 0.4).scale(a * cx.light);
+        let cap_col = look.at(1.0).mix(WHITE, 0.4).scale(a * cx.light);
         for (j, &h) in self.heights.iter().enumerate() {
             let hs = (h * steps as f32) as usize;
             let bx = x0 + (j * (self.bar_w + self.gap)) as i32;

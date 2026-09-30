@@ -101,6 +101,15 @@ impl Canvas {
         }
     }
 
+    /// Put a glyph over anything, lit or not (a letter that must stay legible).
+    #[inline]
+    pub fn put_top(&mut self, x: i32, y: i32, ch: char, fg: Rgb) {
+        if let Some(i) = self.idx(x, y) {
+            self.put_over(i, ch, fg);
+            self.lit[i] = false;
+        }
+    }
+
     #[inline]
     fn put_over(&mut self, i: usize, ch: char, fg: Rgb) {
         let c = &mut self.cells[i];

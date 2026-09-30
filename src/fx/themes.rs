@@ -11,8 +11,9 @@
 //!   sweep on the downbeat, hi-hats sparkle single letters.
 //! * shock:   kicks send rings out from the centre that jolt the letters as
 //!   they pass; snares fire a beam along one row.
-//! * wave:    the waveform runs across the screen as a line, and through the
-//!   banner by lifting its columns.
+//! * wave:    a mirrored waveform rolls in from both screen edges toward the
+//!   banner, faster the busier the music; the letters stay put and light up
+//!   as each swell arrives.
 //! * fire:    character-cell fire (aafire's ramp) rising off the letter tops,
 //!   flame height per column from its band, surging on kicks.
 //! * matrix:  katakana rain, speed from loudness, new streams on hi-hats;
@@ -21,6 +22,14 @@
 //!   the banner into magenta / cyan ghosts.
 //! * springs: every letter on a damped spring; kicks push, the bass bends.
 //! * floor:   the banner steady over a cava bar floor.
+//! * bounce:  the whole banner flies around the screen, faster with the
+//!   music, kicks swerving it, a rainbow trail behind it; every wall it hits
+//!   jumps the palette.
+//! * warp:    hyperspace: glyphs stream out of the banner's edges and
+//!   accelerate away; density follows intensity, kicks burst, drops flood.
+//!
+//! Colours come from the shared `Look` (the letters' `fin` is refreshed from
+//! it every frame), so the theme's accents and the ribbon always match.
 //!
 //! Every theme blends toward the plain banner as `react` falls to 0, so the
 //! intro hands over and the outro takes over without a jump.
@@ -28,7 +37,7 @@
 use super::banner::Ch;
 use super::effects::{CIPHER, Kind};
 use super::spectrum::Spectrum;
-use super::{Ctx, KATAKANA, Rng};
+use super::{Ctx, KATAKANA, Look, Rng};
 use crate::canvas::Canvas;
 use crate::color::{Rgb, WHITE};
 
@@ -43,9 +52,11 @@ pub enum Theme {
     Glitch,
     Springs,
     Floor,
+    Bounce,
+    Warp,
 }
 
-pub const ALL: [Theme; 9] = [
+pub const ALL: [Theme; 11] = [
     Theme::Levels,
     Theme::Pulse,
     Theme::Shock,
@@ -55,11 +66,11 @@ pub const ALL: [Theme; 9] = [
     Theme::Glitch,
     Theme::Springs,
     Theme::Floor,
+    Theme::Bounce,
+    Theme::Warp,
 ];
 
 const FIRE: [&str; 6] = ["1a0000", "510100", "8A003C", "fe650d", "fff75d", "ffffff"];
-const BEAMS: [&str; 3] = ["8A008A", "00D1FF", "ffffff"];
-const WAVES: [&str; 3] = ["31a0d4", "f0ff65", "ffb102"];
 const GREENS: [&str; 3] = ["185318", "3cb043", "92be92"];
 const VHS: [&str; 2] = ["ff3cfa", "3cf0ff"];
 /// aafire's ramp, cold → hot.
@@ -88,6 +99,8 @@ impl Theme {
             Theme::Glitch => &[Kind::Vhs, Kind::Decrypt],
             Theme::Springs => &[Kind::Bouncy, Kind::Unstable],
             Theme::Floor => &[Kind::Print, Kind::Spray, Kind::Fireworks],
+            Theme::Bounce => &[Kind::Slide, Kind::Spray, Kind::Bouncy],
+            Theme::Warp => &[Kind::Blackhole, Kind::Expand, Kind::Fireworks],
         }
     }
 
@@ -95,8 +108,6 @@ impl Theme {
     pub fn palette(self) -> Option<Vec<Rgb>> {
         let g = |s: &[&str]| Some(s.iter().map(|h| Rgb::hex(h)).collect::<Vec<_>>());
         match self {
-            Theme::Shock => g(&BEAMS[..2]),
-            Theme::Wave => g(&WAVES),
             Theme::Fire => g(&FIRE[2..5]),
             Theme::Matrix => g(&GREENS),
             Theme::Glitch => g(&VHS),
@@ -108,14 +119,24 @@ impl Theme {
     pub fn busy(self) -> f32 {
         match self {
             Theme::Pulse => 0.15,
-            Theme::Wave => 0.25,
+            Theme::Wave => 0.3,
             Theme::Levels => 0.4,
             Theme::Floor => 0.45,
             Theme::Matrix => 0.55,
-            Theme::Springs => 0.65,
+            Theme::Springs => 0.6,
+            Theme::Bounce => 0.65,
             Theme::Shock => 0.75,
             Theme::Glitch => 0.8,
+            Theme::Warp => 0.85,
             Theme::Fire => 0.9,
+        }
+    }
+
+    /// Extra palette step per beat, for themes whose idea is the colour.
+    pub fn beat_step(self) -> f32 {
+        match self {
+            Theme::Pulse => 0.25,
+            _ => 0.0,
         }
     }
 }
@@ -127,6 +148,14 @@ pub struct Geom {
     pub oy: i32,
     pub bw: usize,
     pub bh: usize,
+}
+
+struct Star {
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
+    u: f32,
 }
 
 struct Drop {
@@ -144,8 +173,6 @@ pub struct Hold {
     t: f32,
     flash: f32,
     sweep: f32,
-    off: f32,
-    beats: u64,
     since_kick: f32,
     sparks: Vec<(usize, f32)>,
     rings: Vec<(f32, f32)>,
@@ -160,6 +187,15 @@ pub struct Hold {
     tears: Vec<(usize, i32, f32)>,
     scramble: f32,
     stiff: f32,
+    /// wave: per-column level history, outer edge first (left, right).
+    hist: Vec<(f32, f32)>,
+    tick: f32,
+    /// bounce: offset from home, unit heading, trail of past offsets.
+    off: (f32, f32),
+    head: (f32, f32),
+    trail: Vec<(f32, f32)>,
+    stars: Vec<Star>,
+    spawn_acc: f32,
 }
 
 fn hex(h: &str) -> Rgb {
@@ -203,8 +239,6 @@ impl Hold {
             t: 0.0,
             flash: 0.0,
             sweep: -1.0,
-            off: 0.0,
-            beats: 0,
             since_kick: 1.0,
             sparks: Vec::new(),
             rings: Vec::new(),
@@ -219,10 +253,18 @@ impl Hold {
             tears: Vec::new(),
             scramble: 0.0,
             stiff: 60.0,
+            hist: Vec::new(),
+            tick: 0.0,
+            off: (0.0, 0.0),
+            head: (0.0, 0.0),
+            trail: Vec::new(),
+            stars: Vec::new(),
+            spawn_acc: 0.0,
         }
     }
 
-    pub fn draw(&mut self, cv: &mut Canvas, cx: &Ctx, chars: &mut [Ch], g: Geom, spec: &mut Spectrum, react: f32) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw(&mut self, cv: &mut Canvas, cx: &Ctx, chars: &mut [Ch], g: Geom, spec: &mut Spectrum, react: f32, look: &mut Look) {
         let f = cx.f;
         self.t += cx.dt;
         if f.drop {
@@ -232,13 +274,15 @@ impl Hold {
         match self.theme {
             Theme::Levels => self.levels(cv, cx, chars, g, react),
             Theme::Pulse => self.pulse(cv, cx, chars, g, react),
-            Theme::Shock => self.shock(cv, cx, chars, g, react),
-            Theme::Wave => self.wave(cv, cx, chars, g, react),
+            Theme::Shock => self.shock(cv, cx, chars, g, react, look),
+            Theme::Wave => self.wave(cv, cx, chars, g, react, look),
             Theme::Fire => self.fire(cv, cx, chars, g, react),
             Theme::Matrix => self.matrix(cv, cx, chars, react),
             Theme::Glitch => self.glitch(cv, cx, chars, g, react),
             Theme::Springs => self.springs(cv, cx, chars, g, react),
-            Theme::Floor => self.floor(cv, cx, chars, g, spec, react),
+            Theme::Floor => self.floor(cv, cx, chars, g, spec, react, look),
+            Theme::Bounce => self.bounce(cv, cx, chars, g, react, look),
+            Theme::Warp => self.warp(cv, cx, chars, g, react, look),
         }
     }
 
@@ -296,13 +340,8 @@ impl Hold {
     // ------------------------------------------------------------- pulse
 
     fn pulse(&mut self, cv: &mut Canvas, cx: &Ctx, chars: &[Ch], g: Geom, react: f32) {
+        // the colour steps a quarter turn per beat (Theme::beat_step)
         let f = cx.f;
-        if f.beat {
-            self.beats += 1;
-        }
-        // colour steps a quarter turn per beat, eased over ~60 ms
-        let target = self.beats as f32 * 0.25;
-        self.off += (target - self.off) * (1.0 - (-cx.dt / 0.06).exp());
         self.step_sweep(cx);
         if f.hat > 0.2 && !chars.is_empty() {
             for _ in 0..(2.0 + f.hat * 6.0) as usize {
@@ -317,8 +356,7 @@ impl Hold {
             spark[s.0] = true;
         }
         for (i, c) in chars.iter().enumerate() {
-            let u = c.dx as f32 / g.bw as f32;
-            let mut col = cx.grad.wrap(u * 0.5 + self.off).scale(bright).mix(WHITE, 0.8 * self.sweep_at(c, g));
+            let mut col = c.fin.scale(bright).mix(WHITE, 0.8 * self.sweep_at(c, g));
             if spark[i] {
                 col = WHITE;
             }
@@ -328,7 +366,7 @@ impl Hold {
 
     // ------------------------------------------------------------- shock
 
-    fn shock(&mut self, cv: &mut Canvas, cx: &Ctx, chars: &[Ch], g: Geom, react: f32) {
+    fn shock(&mut self, cv: &mut Canvas, cx: &Ctx, chars: &[Ch], g: Geom, react: f32, look: &Look) {
         let f = cx.f;
         let centre = (g.ox as f32 + g.bw as f32 / 2.0, g.oy as f32 + g.bh as f32 / 2.0);
         let maxr = (cx.w as f32).hypot(cx.h as f32 * 2.0) * 0.55;
@@ -359,7 +397,7 @@ impl Hold {
             let r = age * speed;
             let life = 1.0 - r / maxr;
             let ch = if life > 0.75 { '•' } else if life > 0.4 { '∙' } else { '·' };
-            let col = ramp(&BEAMS, 0.35 + 0.65 * life).scale((0.3 + 0.7 * life) * s.min(1.0) * react);
+            let col = look.at(0.35 + 0.65 * life).mix(WHITE, 0.3 * life).scale((0.3 + 0.7 * life) * s.min(1.0) * react);
             let steps = (r * 7.0).max(12.0) as usize;
             for k in 0..steps {
                 let a = k as f32 / steps as f32 * std::f32::consts::TAU;
@@ -374,7 +412,8 @@ impl Hold {
             for k in 0..12 {
                 let x = if rev { hx + k as f32 } else { hx - k as f32 };
                 let ch = BEAM_TRAIL[(k / 4).min(2)];
-                cv.put(x as i32, row, ch, ramp(&BEAMS, 1.0 - k as f32 / 12.0).scale(react));
+                let fade = 1.0 - k as f32 / 12.0;
+                cv.put(x as i32, row, ch, look.at(fade).mix(WHITE, 0.5 * fade).scale(react));
             }
             lit_rows.push((row, hx, rev));
         }
@@ -406,69 +445,72 @@ impl Hold {
 
     // -------------------------------------------------------------- wave
 
-    fn wave(&mut self, cv: &mut Canvas, cx: &Ctx, chars: &[Ch], g: Geom, react: f32) {
+    fn wave(&mut self, cv: &mut Canvas, cx: &Ctx, chars: &[Ch], g: Geom, react: f32, look: &Look) {
         let f = cx.f;
-        let s = &f.wave_l;
-        let (w, h) = (cx.w, cx.h);
-        let span = s.len() / 2;
-        if span < 64 || w == 0 {
-            return self.plain(cv, chars, react);
+        let (w, h) = (cx.w as i32, cx.h as i32);
+        // the fields either side of the banner, one column of air between
+        let left_end = g.ox - 2; // last column of the left field
+        let right_start = g.ox + g.bw as i32 + 1;
+        let n = (left_end + 1).max(w - right_start).max(1) as usize;
+        if self.hist.len() != n {
+            self.hist = vec![(0.0, 0.0); n];
         }
-        // trigger on a rising zero crossing so the picture holds still
-        let mut trig = 0;
-        let mut lp = 0.0f32;
-        for (i, &v) in s[..span].iter().enumerate() {
-            let prev = lp;
-            lp += (v - lp) * 0.1;
-            if i > 8 && prev <= 0.0 && lp > 0.0 {
-                trig = i;
-                break;
-            }
+        // the newest level enters at the screen edge and rolls inward
+        let peak = |s: &[f32]| s[s.len().saturating_sub(800)..].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let (pl, pr) = (peak(&f.wave_l), peak(&f.wave_r));
+        self.peak = pl.max(pr).max(self.peak * (-cx.dt / 3.0).exp()).max(1e-4);
+        let lv = |p: f32| ((p / self.peak).powf(1.4) * (0.7 + 0.5 * f.kick_env)).min(1.0);
+        let (vl, vr) = (lv(pl), lv(pr));
+        let tempo = if f.beat_conf > 0.5 { (f.bpm / 120.0).clamp(0.8, 1.5) } else { 1.0 };
+        let rate = (22.0 + 70.0 * f.intensity) * tempo;
+        self.tick += cx.dt * rate;
+        while self.tick >= 1.0 {
+            self.tick -= 1.0;
+            self.hist.rotate_right(1);
+            self.hist[0] = (vl, vr);
         }
-        // box-filter each column's slice of samples (a cheap low-pass)
-        let per = (span / w).max(1);
-        let mut ys: Vec<f32> = (0..w)
-            .map(|x| {
-                let a = trig + x * span / w;
-                let b = (a + per).min(s.len());
-                s[a..b].iter().sum::<f32>() / (b - a).max(1) as f32
-            })
-            .collect();
-        let pk = ys.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-        self.peak = pk.max(self.peak * (-cx.dt / 1.5).exp()).max(1e-4);
-        let amp = ((h as f32 - g.bh as f32) / 2.0 - 1.0).clamp(1.0, 8.0) * react * (0.6 + 0.4 * f.loud);
-        for y in &mut ys {
-            *y = *y / self.peak * amp;
-        }
+
         let cy = g.oy as f32 + g.bh as f32 / 2.0;
-        // the line, outside the banner: ▔ ─ ▁ give three heights per row
-        let mut prev: Option<i32> = None;
-        for (x, &v) in ys.iter().enumerate() {
-            let xi = x as i32;
-            if xi >= g.ox - 1 && xi <= g.ox + g.bw as i32 {
-                prev = None;
-                continue;
-            }
-            let yc = cy - v;
-            let row = yc.floor();
-            let fr = yc - row;
-            let ch = if fr < 0.34 { '▔' } else if fr < 0.67 { '─' } else { '▁' };
-            let col = ramp(&WAVES, 0.5 + v / (2.0 * amp.max(1.0))).scale(react);
-            let r = row as i32;
-            if let Some(p) = prev {
-                // join steep steps so the line never breaks
-                for y in (p.min(r) + 1)..p.max(r) {
-                    cv.put(xi, y, '│', col.scale(0.7));
+        let amp = (g.bh as f32 * 0.5 + 1.5 + 3.5 * f.intensity).min(cy - 1.0).min(h as f32 - cy - 1.0).max(1.0) * react;
+        for k in 0..n {
+            for (x, v) in [(k as i32, self.hist[k].0), (w - 1 - k as i32, self.hist[k].1)] {
+                let in_field = x <= left_end || x >= right_start;
+                if !in_field || x < 0 || x >= w {
+                    continue;
+                }
+                // mirrored about the banner's middle row, in half cells
+                let half = v * amp;
+                if half < 0.25 {
+                    continue;
+                }
+                let near = k as f32 / n as f32; // 0 at the edge .. 1 at the banner
+                let base = look.at(near).scale(0.45 + 0.55 * v);
+                let top = cy - half;
+                let bot = cy + half;
+                for y in top.floor() as i32..=bot.ceil() as i32 - 1 {
+                    let (y0, y1) = (y as f32, y as f32 + 1.0);
+                    let cover_top = (y1 - top).clamp(0.0, 1.0);
+                    let cover_bot = (bot - y0).clamp(0.0, 1.0);
+                    let glyph = if cover_top < 0.5 {
+                        '▄'
+                    } else if cover_bot < 0.5 {
+                        '▀'
+                    } else {
+                        '█'
+                    };
+                    // brightest on the axis, falling off toward the tips
+                    let d = ((y as f32 + 0.5 - cy).abs() / half.max(0.5)).min(1.0);
+                    let col = base.scale(1.0 - 0.6 * d).mix(WHITE, 0.35 * (1.0 - d) * v);
+                    cv.put(x, y, glyph, col);
                 }
             }
-            cv.put(xi, r, ch, col);
-            prev = Some(r);
         }
+        // the letters stay put; each swell lights them as it arrives
+        let at = |k: i32| self.hist.get(k.max(0) as usize).copied().unwrap_or((0.0, 0.0));
+        let arrive = at(left_end).0.max(at(w - 1 - right_start).1);
         for c in chars {
-            let x = c.home.0 as usize;
-            let v = ys.get(x).copied().unwrap_or(0.0);
-            let col = ramp(&WAVES, 0.5 + v / (2.0 * amp.max(1.0)));
-            self.letter(cv, c.home.0 as i32, (c.home.1 - v).round() as i32, c.ch, c.fin.mix(col, react * 0.7));
+            let col = c.fin.scale(0.65 + 0.35 * arrive).mix(WHITE, 0.35 * arrive * arrive);
+            self.letter(cv, c.home.0 as i32, c.home.1 as i32, c.ch, c.fin.mix(col, react));
         }
     }
 
@@ -689,11 +731,12 @@ impl Hold {
 
     // ------------------------------------------------------------- floor
 
-    fn floor(&mut self, cv: &mut Canvas, cx: &Ctx, chars: &[Ch], g: Geom, spec: &mut Spectrum, react: f32) {
+    #[allow(clippy::too_many_arguments)]
+    fn floor(&mut self, cv: &mut Canvas, cx: &Ctx, chars: &[Ch], g: Geom, spec: &mut Spectrum, react: f32, look: &Look) {
         let f = cx.f;
         let rows = cx.h as i32 - (g.oy + g.bh as i32) - 2;
         if rows >= 3 {
-            spec.floor(cv, cx, rows as usize, react);
+            spec.floor(cv, cx, rows as usize, react, look);
         }
         self.step_sweep(cx);
         for c in chars {
@@ -702,9 +745,136 @@ impl Hold {
         }
     }
 
-    fn plain(&self, cv: &mut Canvas, chars: &[Ch], _react: f32) {
+    // ------------------------------------------------------------ bounce
+
+    fn bounce(&mut self, cv: &mut Canvas, cx: &Ctx, chars: &[Ch], g: Geom, react: f32, look: &mut Look) {
+        let f = cx.f;
+        let (w, h) = (cx.w as i32, cx.h as i32);
+        // where the banner may go: the whole width, from the top down to a
+        // third of the way into the ribbon's room
+        let (x0, x1) = ((-g.ox + 1) as f32, (w - g.ox - g.bw as i32 - 1) as f32);
+        let (y0, y1) = ((-g.oy + 1) as f32, ((h - g.oy - g.bh as i32) / 3) as f32);
+        if self.head == (0.0, 0.0) {
+            let a = self.rng.range(0.3, 1.2) * if self.rng.chance(0.5) { 1.0 } else { -1.0 };
+            self.head = (a.cos() * if self.rng.chance(0.5) { 1.0 } else { -1.0 }, a.sin());
+        }
+        // kicks swerve it once the music's going
+        if f.kick > 0.35 && f.intensity > 0.45 {
+            let r = self.rng.range(-0.5, 0.5);
+            let (c, s) = (r.cos(), r.sin());
+            self.head = (self.head.0 * c - self.head.1 * s, self.head.0 * s + self.head.1 * c);
+        }
+        let speed = (5.0 + 30.0 * f.intensity) * (1.0 + 1.5 * f.kick_env.min(1.0)) * react;
+        self.off.0 += self.head.0 * speed * cx.dt;
+        self.off.1 += self.head.1 * speed * 0.5 * cx.dt; // rows are twice as tall
+        let mut hit = false;
+        if x1 > x0 {
+            if self.off.0 < x0 || self.off.0 > x1 {
+                self.head.0 = -self.head.0;
+                self.off.0 = self.off.0.clamp(x0, x1);
+                hit = true;
+            }
+        } else {
+            self.off.0 = 0.0;
+        }
+        if y1 > y0 && (self.off.1 < y0 || self.off.1 > y1) {
+            self.head.1 = -self.head.1;
+            self.off.1 = self.off.1.clamp(y0, y1);
+            hit = true;
+        }
+        if hit {
+            look.nudge(0.22);
+            look.flash = look.flash.max(0.5 * f.intensity);
+        }
+        // copies far enough apart to read as separate banners, not a smear
+        let last = self.trail.first().copied().unwrap_or((f32::MAX, 0.0));
+        if (self.off.0 - last.0).hypot((self.off.1 - last.1) * 2.0) > 5.0 {
+            self.trail.insert(0, self.off);
+            self.trail.truncate(4);
+        }
+        let place = |o: (f32, f32), c: &Ch| ((c.home.0 + o.0 * react).round() as i32, (c.home.1 + o.1 * react).round() as i32);
         for c in chars {
-            self.letter(cv, c.home.0 as i32, c.home.1 as i32, c.ch, c.fin);
+            let (x, y) = place(self.off, c);
+            // over the ribbon too: a flying banner must stay readable
+            let col = c.fin.mix(WHITE, 0.35 * f.kick_env.min(1.0));
+            cv.put_top(x, y, c.ch, c.fin.mix(col, react).mix(WHITE, 0.6 * self.flash));
+        }
+        // the trail: older copies behind, each a step further round the palette
+        let ghosts = ((0.5 + 3.5 * f.intensity) * react) as usize;
+        for (k, &o) in self.trail.iter().enumerate().take(ghosts) {
+            let fade = 0.3 - 0.07 * k as f32;
+            for c in chars {
+                let (x, y) = place(o, c);
+                let u = (c.dx as f32 / g.bw as f32 * 0.8 + 0.12 * k as f32).fract();
+                cv.put_under(x, y, c.ch, look.at(u).scale(fade * cx.light));
+            }
+        }
+    }
+
+    // -------------------------------------------------------------- warp
+
+    fn warp(&mut self, cv: &mut Canvas, cx: &Ctx, chars: &[Ch], g: Geom, react: f32, look: &Look) {
+        let f = cx.f;
+        let (w, h) = (cx.w as f32, cx.h as f32);
+        let centre = (g.ox as f32 + g.bw as f32 / 2.0, g.oy as f32 + g.bh as f32 / 2.0);
+        let (rx, ry) = (g.bw as f32 / 2.0 + 1.0, g.bh as f32 / 2.0 + 1.0);
+        let maxr = (w / 2.0).hypot(h);
+        // stars leave from the banner's edges
+        self.spawn_acc += cx.dt * (8.0 + 320.0 * f.intensity.powf(1.5)) * (1.0 + 3.0 * f.kick_env.min(1.0)) * react;
+        if f.drop {
+            self.spawn_acc += 500.0;
+        }
+        let spawn = self.spawn_acc as usize;
+        self.spawn_acc -= spawn as f32;
+        for _ in 0..spawn {
+            if self.stars.len() >= 1800 {
+                break;
+            }
+            let a = self.rng.range(0.0, std::f32::consts::TAU);
+            let (dx, dy) = (a.cos(), a.sin() * 0.5);
+            let t = (rx / dx.abs().max(1e-3)).min(ry / dy.abs().max(1e-3)) * self.rng.range(1.0, 1.5);
+            let sp = self.rng.range(3.0, 9.0);
+            self.stars.push(Star { x: centre.0 + dx * t, y: centre.1 + dy * t, vx: dx * sp, vy: dy * sp, u: a / std::f32::consts::TAU });
+        }
+        let accel = (cx.dt * (0.9 + 2.6 * f.intensity + 2.0 * f.kick_env.min(1.0))).exp();
+        for s in &mut self.stars {
+            s.vx *= accel;
+            s.vy *= accel;
+            s.x += s.vx * cx.dt;
+            s.y += s.vy * cx.dt;
+        }
+        self.stars.retain(|s| s.x >= -1.0 && s.x <= w && s.y >= -1.0 && s.y <= h);
+
+        self.step_sweep(cx);
+        for c in chars {
+            let col = c.fin.scale(0.75 + 0.25 * f.kick_env.min(1.0)).mix(WHITE, 0.8 * self.sweep_at(c, g));
+            self.letter(cv, c.home.0 as i32, c.home.1 as i32, c.ch, c.fin.mix(col, react));
+        }
+        for s in &self.stars {
+            let (dx, dy) = (s.x - centre.0, (s.y - centre.1) * 2.0);
+            let dist = dx.hypot(dy);
+            let sp = s.vx.hypot(s.vy * 2.0);
+            // slow ones are dots, fast ones streaks along their heading
+            let glyph = if sp < 12.0 {
+                '·'
+            } else if sp < 24.0 {
+                '•'
+            } else {
+                let a = dy.atan2(dx).abs().to_degrees();
+                let a = if a > 90.0 { 180.0 - a } else { a };
+                if a < 22.5 {
+                    '─'
+                } else if a > 67.5 {
+                    '│'
+                } else if (dx > 0.0) == (dy > 0.0) {
+                    '╲'
+                } else {
+                    '╱'
+                }
+            };
+            let near = (dist / maxr).min(1.0);
+            let col = look.at(s.u).scale((0.25 + 0.95 * near).min(1.0) * react).mix(WHITE, 0.4 * near * near);
+            cv.put_under(s.x.round() as i32, s.y.round() as i32, glyph, col);
         }
     }
 }

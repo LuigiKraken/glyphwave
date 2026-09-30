@@ -132,12 +132,6 @@ impl Gradient {
         Gradient::new(&s)
     }
 
-    /// Clamped sample.
-    pub fn at(&self, t: f32) -> Rgb {
-        let i = (t.clamp(0.0, 1.0) * (Self::N - 1) as f32) as usize;
-        self.lut[i]
-    }
-
     /// Wrapping sample.
     pub fn wrap(&self, t: f32) -> Rgb {
         let i = (t.rem_euclid(1.0) * (Self::N - 1) as f32) as usize;
@@ -150,3 +144,37 @@ pub fn fallback_palette() -> Vec<Rgb> {
     vec![Rgb::hex("8A008A"), Rgb::hex("00D1FF"), Rgb::hex("FFFFFF")]
 }
 
+
+/// Neon palettes for music cycles, picked more often the busier it gets.
+pub const VIVID: [&[&str]; 9] = [
+    &["ff00c8", "7a00ff", "00e5ff"],
+    &["ff0055", "ff8800", "ffee00", "00ff99"],
+    &["00ff87", "00c3ff", "b400ff"],
+    &["3a00ff", "ff00e6", "ff9a00"],
+    &["00ffea", "e0ffff", "ff00aa"],
+    &["c6ff00", "00ff6a", "00d0ff"],
+    &["ff1744", "d500f9", "2979ff", "00e5ff"],
+    &["ff6a00", "ff0080", "8000ff"],
+    &["ffe600", "ff2d95", "00f0ff"],
+];
+
+pub fn vivid(i: usize) -> Vec<Rgb> {
+    VIVID[i % VIVID.len()].iter().map(|h| Rgb::hex(h)).collect()
+}
+
+/// Push a palette's chroma and lightness up so it glows on black
+/// (album covers are often muted).
+pub fn saturate(stops: &[Rgb]) -> Vec<Rgb> {
+    stops
+        .iter()
+        .map(|c| {
+            let p = c.to_lab();
+            let ch = p.chroma();
+            if ch < 0.03 {
+                return *c; // a grey stays grey
+            }
+            let want = (ch * 1.35).max(0.16);
+            Lab { l: p.l.max(0.6), a: p.a / ch * want, b: p.b / ch * want }.to_rgb()
+        })
+        .collect()
+}
