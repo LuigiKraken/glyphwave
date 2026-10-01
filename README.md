@@ -30,8 +30,8 @@ mouse and it's gone.
    forever), whether coming back while it runs shows the lock screen, and
    what comes after the run (sleep, lock or screen off). Then whether it runs
    on battery, and whether the screen dims while it runs (by default only on
-   battery). `b` goes back a question. Before it changes anything it sums up your answers in one line,
-   such as "Idle for 5 min → glyphwave runs for 10 min → then it sleeps". Then it hooks itself
+   battery). `b` goes back a question. Before it changes anything it sums up
+   your answers in one line, such as "Idle for 5 min → glyphwave runs for 10 min → then it sleeps". Then it hooks itself
    into your desktop's own idle timer (KDE, GNOME, Hyprland, sway or X11). It
    lists every file it will change before it writes anything, and
    `glyphwave setup --remove` puts them all back. It never needs root and
