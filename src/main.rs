@@ -36,13 +36,14 @@ USAGE: glyphwave [options]
                     X11); lists every file first. --remove puts it all back
   launch            open the screensaver fullscreen in a terminal, once; what
                     the idle timer runs. --stop closes it (before a locker),
-                    --now is the start-now key's
+                    --now is the start-now key's (see --now below)
 
   --screensaver     exit on mouse motion, on any key but F1–F12 and the
                     music keys, or when the KDE/GNOME locker takes over;
                     woken after lock_after minutes, it locks the screen first
-  --now             with --screensaver: started by hand, so waking it locks
-                    at once if lock_after is set (launch --now passes it on)
+  --now             with --screensaver: started by hand, as a visualizer, so
+                    waking it never locks, and the desktop doesn't dim, lock
+                    or sleep while it runs (launch --now passes it on)
   --demo            play a built-in synthetic track instead of the sound card
   --test            try things out in this terminal: --demo and --debug,
                     plus the TEST KEYS below
@@ -102,7 +103,7 @@ struct Opts {
     theme: Option<String>,
     truecolor: bool,
     console: bool,
-    /// started by hand (the start-now key): waking it locks at once
+    /// started by hand (the start-now key): never locks, keeps the screen on
     now: bool,
     cfg: config::Config,
 }
@@ -223,6 +224,8 @@ fn main() {
     let tty_in = term::stdin_is_tty();
     let mut term = term::Term::enter(o.screensaver);
     let watcher = mpris::Watcher::start(o.screensaver);
+    // held until exit; the desktop's own timers would end a run started by hand
+    let _awake = (o.screensaver && o.now).then(launch::keep_awake);
     let mut cap = audio::Capture::new();
     if o.demo {
         audio::start_synth(cap.ring.clone());

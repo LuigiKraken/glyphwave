@@ -234,9 +234,9 @@ impl Config {
     }
 
     /// Whether dismissing the screensaver after `secs` of it should lock:
-    /// past lock_after, or at once when it was started by hand (`now`).
+    /// past lock_after, and never when it was started by hand (`now`).
     pub fn locks(&self, now: bool, secs: f64) -> bool {
-        self.lock_after.is_some_and(|m| now || secs >= m as f64 * 60.0)
+        !now && self.lock_after.is_some_and(|m| secs >= m as f64 * 60.0)
     }
 
     /// The file setup writes: the general settings, then the optional
@@ -422,6 +422,8 @@ mod tests {
         assert!(at(Some(0)).locks(false, 0.0));
         assert!(!at(Some(5)).locks(false, 299.0));
         assert!(at(Some(5)).locks(false, 300.0));
-        assert!(at(Some(5)).locks(true, 1.0));
+        // started by hand it's a visualizer: never locks
+        assert!(!at(Some(0)).locks(true, 0.0));
+        assert!(!at(Some(5)).locks(true, 1e6));
     }
 }

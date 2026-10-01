@@ -44,7 +44,10 @@ custom shortcut running `glyphwave launch --now`, `shortcut` in the config (Meta
 its path goes into `org.gnome.settings-daemon.plugins.media-keys
 custom-keybindings`, with `name`, `command` and `binding` under
 `.../custom-keybindings/glyphwave/`. It shows in Settings > Keyboard >
-Custom Shortcuts; `--remove` puts the list back as it was.
+Custom Shortcuts; `--remove` puts the list back as it was. Started that way
+it's a visualizer: waking it never locks, and it holds off blank, lock and
+sleep through `org.gnome.SessionManager.Inhibit` until you stop it (untested
+on GNOME so far).
 
 Fedora: Workstation (GNOME) and the KDE spin should need nothing extra, but
 that is still to be tried on a real Fedora install. The binary in
