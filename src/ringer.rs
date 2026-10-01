@@ -7,7 +7,6 @@
 //! none, so the stream it is. Nothing runs while no call rings.
 
 use std::io::Write;
-use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
 use std::thread::JoinHandle;
@@ -169,9 +168,7 @@ impl Ringer {
             };
             c.stdin(if matches!(self.tone, Tone::Builtin) { Stdio::piped() } else { Stdio::null() });
             c.stdout(Stdio::null()).stderr(Stdio::null());
-            // gone with glyphwave even if it dies without stopping it
-            unsafe { c.pre_exec(|| { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM); Ok(()) }) };
-            match c.spawn() {
+            match crate::audio::die_with_us(&mut c).spawn() {
                 Ok(mut child) => {
                     if let Some(mut stdin) = child.stdin.take() {
                         // the pipe paces the writes; closing it ends the player

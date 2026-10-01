@@ -10,6 +10,7 @@
 //! knob like a pause.
 
 use std::io::{BufRead, BufReader, Read};
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -167,6 +168,14 @@ impl Drop for Capture {
     }
 }
 
+/// Have the child go when glyphwave does, even if it dies without stopping
+/// it. The signal follows the thread that spawns, so that thread must live
+/// as long as the process.
+pub fn die_with_us(c: &mut Command) -> &mut Command {
+    // pre_exec: only prctl, which is async-signal-safe
+    unsafe { c.pre_exec(|| { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM); Ok(()) }) }
+}
+
 /// `pactl` with untranslated output.
 fn pactl(args: &[&str]) -> Command {
     let mut c = Command::new("pactl");
@@ -194,12 +203,13 @@ fn read_hushed() -> bool {
 
 /// Follow the default sink's mute and volume. One `pactl subscribe` sleeps
 /// on its pipe; a sink or server event (the default changing) re-reads the
-/// state, once per burst. Without pactl it just stays false.
+/// state, once per burst. Without pactl it just stays false. The thread
+/// lives until the subscription ends, so the child dies with glyphwave.
 pub fn watch_sink() -> Arc<AtomicBool> {
     let hushed = Arc::new(AtomicBool::new(false));
     let h = hushed.clone();
     std::thread::spawn(move || {
-        let Ok(mut child) = pactl(&["subscribe"]).stdout(Stdio::piped()).spawn() else { return };
+        let Ok(mut child) = die_with_us(&mut pactl(&["subscribe"])).stdout(Stdio::piped()).spawn() else { return };
         h.store(read_hushed(), Ordering::Relaxed);
         let mut rd = BufReader::new(child.stdout.take().unwrap());
         let mut line = String::new();
