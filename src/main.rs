@@ -12,6 +12,7 @@ mod dsp;
 mod fx;
 mod launch;
 mod mpris;
+mod ringer;
 mod scene;
 mod setup;
 mod term;
@@ -57,7 +58,8 @@ USAGE: glyphwave [options]
                     in place of the ribbon, runs only when asked for)
 
 banner and fps also come from ~/.config/glyphwave/config (setup writes it);
-options given here win.
+options given here win. ringtone = default, none or a sound file (wav, ogg,
+flac) there picks what plays while a call rings.
 
 KEYS (interactive): q quit · space play/pause · n next · p previous ·
   v next theme/effect · i idle/music · d debug · l next banner (logo, name,
@@ -70,7 +72,8 @@ TEST KEYS (--test): 1–0 the themes in the order above · d t s w fake a
 
 A muted sink, or one at 0 %, counts as paused. While a call rings (read from
 the desktop's call notification) the banner makes way for the app's icon and
-the caller, and any key or the mouse ends glyphwave, the music keys too.
+the caller, the music fades out and stays paused, a ringtone plays, and any
+key or the mouse ends glyphwave, the music keys too.
 ";
 
 struct Opts {
@@ -80,6 +83,7 @@ struct Opts {
     idle: bool,
     fps: f32,
     banner: Option<String>,
+    ringtone: Option<String>,
     frames: Option<u64>,
     size: Option<(usize, usize)>,
     stats: bool,
@@ -99,6 +103,7 @@ fn opts() -> Opts {
         idle: false,
         fps: cfg.fps.unwrap_or(30.0).clamp(5.0, 240.0),
         banner: cfg.banner,
+        ringtone: cfg.ringtone,
         frames: None,
         size: None,
         stats: false,
@@ -196,6 +201,8 @@ fn main() {
         audio::start_synth(cap.ring.clone());
     }
     let calls = calls::Calls::start();
+    let mut ringer = ringer::Ringer::new(o.ringtone.as_deref());
+    let (mut fade, mut was_ringing) = (None::<std::thread::JoinHandle<()>>, false);
     // the demo isn't on the sink; --test fakes a mute with m instead
     let hushed = if o.demo { Arc::new(AtomicBool::new(false)) } else { audio::watch_sink() };
     let (mut fake_pause, mut fake_mute) = (false, false);
@@ -387,6 +394,13 @@ fn main() {
         if ringing && !scene_f.on() {
             banner.drop_cycle();
         }
+        // the player fades out and pauses once (and stays paused; the demo
+        // leaves the real one alone); the ringtone loops while it rings
+        if ringing && !was_ringing && !o.demo && track.playing() {
+            fade = Some(ringer::fade_and_pause(&track.player, watcher.pauser(track.player.clone())));
+        }
+        was_ringing = ringing;
+        ringer.ring(ringing);
 
         // ------------------------------------------------------ compose
         cv.clear();
@@ -468,8 +482,13 @@ fn main() {
             break;
         }
     }
+    ringer.stop();
     cap.stop();
     term.restore();
+    // a fade cut short by the exit still pauses and restores the volume
+    if let Some(f) = fade {
+        let _ = f.join();
+    }
     if cap.missing {
         eprintln!(
             "glyphwave: neither parec nor pw-record found, so no music visuals. parec comes with \
