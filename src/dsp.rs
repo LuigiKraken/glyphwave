@@ -99,6 +99,7 @@ struct Onset {
     hist: [f32; 3],
     since: f32,
     warm: f32,
+    shut: f32,
 }
 
 impl Onset {
@@ -106,15 +107,23 @@ impl Onset {
     fn step(&mut self, o: f32, delta: f32, refractory: f32, gate: bool) -> f32 {
         let dt = 1.0 / HOP_RATE;
         self.since += dt;
-        self.warm += dt;
+        // warm up again when the music starts after a real silence (not the
+        // gap between a ringtone's rounds): the step out of it swamps the
+        // statistics, and on 3 s alone that hides every onset for seconds,
+        // which reads loud music already playing as calm
+        self.shut = if gate { 0.0 } else { self.shut + dt };
+        self.warm = if self.shut > 2.0 { 0.0 } else { self.warm + dt };
         let sd = (self.var + 1e-6).sqrt();
         let z = (o - self.mean) / sd;
         let is_max = self.hist.iter().all(|&h| o >= h);
         self.hist = [self.hist[1], self.hist[2], o];
-        ema(&mut self.mean, o, dt, 3.0);
+        let tau = if self.warm < 2.0 { 0.4 } else { 3.0 };
+        ema(&mut self.mean, o, dt, tau);
         let d = o - self.mean;
-        ema(&mut self.var, d * d, dt, 3.0);
-        if gate && self.warm > 1.0 && z > delta && is_max && self.since > refractory && o > 0.05 {
+        ema(&mut self.var, d * d, dt, tau);
+        // and a real hit, not a held chord's beating, which a z-score alone
+        // (scale-free) counts as onsets once its spread has settled
+        if gate && self.warm > 0.5 && z > delta && is_max && self.since > refractory && o > 0.2 {
             self.since = 0.0;
             ((z - delta) / 4.0 + 0.35).clamp(0.0, 1.0)
         } else {
@@ -820,5 +829,77 @@ impl Analyzer {
             }
         }
         self.period_score = s0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::{RING, Ring};
+
+    fn noise(s: &mut u32) -> f64 {
+        *s ^= *s << 13;
+        *s ^= *s >> 17;
+        *s ^= *s << 5;
+        *s as f64 / u32::MAX as f64 * 2.0 - 1.0
+    }
+
+    /// A calm pad (a chord swelling slowly, a little hiss), or a loud,
+    /// heavy 140 bpm half-time track (kick, snare, 16th hats, a distorted
+    /// wobble bass).
+    fn track(heavy: bool, t: f64, s: &mut u32) -> f32 {
+        let tau = std::f64::consts::TAU;
+        if !heavy {
+            let pad: f64 = [220.0, 277.0, 330.0].iter().map(|f| (tau * f * t).sin()).sum();
+            return (0.08 * pad * (0.7 + 0.3 * (t * 0.5).sin()) + 0.001 * noise(s)) as f32;
+        }
+        let beat = 60.0 / 140.0;
+        let b = t / beat;
+        let bar = b / 4.0;
+        let pk = bar.fract() * 4.0 * beat;
+        let mut x = 1.2 * (tau * (40.0 + 150.0 * (-pk * 25.0).exp()) * pk).sin() * (-pk * 5.0).exp();
+        let ps = (bar + 0.5).fract() * 4.0 * beat;
+        x += 0.9 * noise(s) * (-ps * 12.0).exp() + 0.6 * (tau * 200.0 * ps).sin() * (-ps * 20.0).exp();
+        x += 0.2 * noise(s) * (-(b * 4.0).fract() * beat / 4.0 * 60.0).exp();
+        let wob = 0.5 + 0.5 * (tau * b * if (bar as u32) % 2 == 0 { 1.0 } else { 3.0 }).sin();
+        let saw = ((t * 43.65).fract() * 2.0 - 1.0) + ((t * 87.9).fract() * 2.0 - 1.0);
+        x += 1.5 * (saw * (1.0 + 6.0 * wob)).tanh() * (0.4 + 0.6 * wob);
+        ((x * 1.2).tanh() * 0.7) as f32
+    }
+
+    /// Intensity each second for `secs`, the track playing from the start.
+    fn intensity(heavy: bool, secs: usize) -> Vec<f32> {
+        let mut an = Analyzer::new();
+        an.set_bars(60);
+        let mut ring = Ring { l: vec![0.0; RING], r: vec![0.0; RING], pos: 0, total: 0 };
+        let (mut seed, mut t, mut out) = (0x1234_5678u32, 0.0f64, Vec::new());
+        for frame in 1..=30 * secs {
+            for _ in 0..RATE / 30 {
+                let x = track(heavy, t, &mut seed);
+                let p = ring.pos;
+                (ring.l[p], ring.r[p]) = (x, x);
+                ring.pos = (p + 1) % RING;
+                ring.total += 1;
+                t += 1.0 / RATE as f64;
+            }
+            an.update(&ring, 1.0 / 30.0);
+            if frame % 30 == 0 {
+                out.push(an.f.intensity);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn hard_music_already_playing_reads_hard_within_seconds() {
+        let i = intensity(true, 12);
+        assert!(i[3] > 0.7, "{i:?}"); // at 4 s
+        assert!(i[4..].iter().all(|&x| x > 0.7), "{i:?}");
+    }
+
+    #[test]
+    fn a_calm_pad_stays_calm() {
+        let i = intensity(false, 20);
+        assert!(i.iter().all(|&x| x < 0.35), "{i:?}");
     }
 }

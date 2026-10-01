@@ -10,8 +10,9 @@
 //! palette on the beat, a new cycle's palette, and an intro's own colours
 //! (the green of the matrix rain) alike.
 //! How much it does follows `intensity`: quiet music gets a low, dim, still
-//! ribbon; busy music a tall one that brightens on the beat, flashes on
-//! kicks and sends a pulse outward on each downbeat.
+//! ribbon; busy music a tall one that brightens on the beat, flashes and
+//! jumps on kicks and sends a pulse outward on each downbeat; wild music a
+//! taller one still. Only the bars move: the water line never does.
 //! Sparks are kept for when the music goes wild (the stretch after a drop,
 //! or peak intensity under one of the explosive themes): then the skyline
 //! steams on the hi-hats and bursts on the kicks, high and bright, the rate
@@ -98,13 +99,17 @@ impl Ribbon {
         // the headroom up to the banner that spikes may use. The baseline is
         // a fixed water line, sized for the tallest typical ribbon, so the
         // music only moves the bars and their reflection, never the line.
+        // The height follows intensity on a curve: a low line for quiet
+        // music, a tall skyline once it's going, and taller again (with a
+        // kick on each kick) when it goes wild.
         let fit = |up: usize| up.min(room * 2 / 3).max(1);
-        let up = fit((1.5 + 5.0 * int + 1.5 * lift).round() as usize);
+        let hot = ((int - 0.5) / 0.35).clamp(0.0, 1.0);
+        let up = fit((1.0 + 9.0 * int * int + 1.5 * lift + 2.0 * wild).round() as usize);
         let top = fit(8);
         let down = top.div_ceil(2).clamp(1, room - top);
         let max_up = room - down;
         let base = h - 1 - down as i32; // the baseline row, bars grow up from here
-        let gain = (0.55 + 0.65 * int) * up as f32;
+        let gain = (0.55 + 0.65 * int) * up as f32 * (1.0 + 0.5 * hot * f.kick_env.min(1.0));
         let bright = (0.4 + 0.6 * int + 0.25 * self.beat).min(1.0) * cx.light * a;
         let flash = f.kick_env.min(1.0) * ((int - 0.35) / 0.4).clamp(0.0, 1.0);
 

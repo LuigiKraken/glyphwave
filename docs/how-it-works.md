@@ -57,8 +57,10 @@ hooks in, and the research it builds on.
     skyline with a dim reflection, on through intros, outros and the gaps
     between them, so the screen never goes still while the music plays. How
     much it does follows the music's intensity. Quiet music gets a low, dim,
-    still ribbon. Busy music gets a tall one that brightens on the beat,
-    flashes on kicks, throws hi-hat sparks and pulses outward on the downbeat.
+    still ribbon a cell or two high. Busy music gets a tall one that
+    brightens on the beat, flashes and jumps on kicks and pulses outward on
+    the downbeat; wild music a taller one still, throwing sparks. Only the
+    bars move: the water line under them stays put.
     It wears the banner's colours (each column takes the colour of the letters
     above it). Spikes run into the headroom under the banner on a soft limit
     instead of flat-topping. It lifts a little between holds to carry the
@@ -324,7 +326,10 @@ These follow [research-brief.md](research-brief.md), a literature review with re
   - cava's quadratic gravity fall.
 - **Onsets.** SuperFlux (Böck & Widmer 2013) on a fixed 100 Hz hop, split into
   kick, snare and hat bands. Peaks are picked with a z-score threshold, using the
-  online parameters from Böck et al. 2012.
+  online parameters from Böck et al. 2012. After a real silence (2 s) the
+  statistics warm up fast (τ 0.4 s for 2 s, then 3 s), or the step out of it
+  would hide every onset for seconds. A flux floor keeps a held chord's
+  beating from counting as onsets.
 - **Tempo.** Ellis 2007 weighted autocorrelation: τ0 = 0.5 s, σ = 1.4 octaves,
   with the duple fold. The estimate only changes after two agreeing estimates.
 - **Beat phase.** A PLL that nudges phase and period on matching onsets. Beats
@@ -334,7 +339,10 @@ These follow [research-brief.md](research-brief.md), a literature review with re
   MilkDrop-style band ratios.
   - **Intensity:** onset density, loudness (relative and absolute), how much
     of the spectrum is lit, and kick/snare punch. It rises in 0.4 s and falls
-    in 2 s. It drives the ribbon and the calm/busy theme choice. The relative
+    in 2 s; loud music already playing reads as loud within about 3 s. It
+    drives the ribbon and the calm/busy theme choice: a theme picked before
+    the analysis had heard the music is cut for a busier one within the
+    first 6 s of its hold if the music turns out much hotter. The relative
     loudness has a small weight because it reads near-full for any steady
     track once the auto-gain settles.
   - **Drop:** a stretch of more than 2 s with the bass below half its running

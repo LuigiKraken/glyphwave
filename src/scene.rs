@@ -10,7 +10,9 @@
 //!   waits for the next lull or downbeat;
 //! * the timer (16 or 32 bars, or 30–60 s) only marks a hold as due; a due
 //!   hold still waits for a lull or a downbeat, and gives up waiting at 10 s;
-//! * quieter music draws calmer themes, louder music busier ones.
+//! * quieter music draws calmer themes, louder music busier ones; a theme
+//!   picked before the analysis had heard the music (it was already playing
+//!   hard when the screensaver came up) is cut for a busy one within seconds.
 
 use crate::dsp::Features;
 use crate::fx::Rng;
@@ -29,6 +31,8 @@ pub enum Cue {
 /// before a high may cut it.
 const MIN_FADE: f32 = 8.0;
 const MIN_CUT: f32 = 4.0;
+/// How long into a hold a theme picked too calm may still be cut.
+const OUTRUN: f32 = 6.0;
 
 pub struct Director {
     since: f32,
@@ -52,6 +56,9 @@ pub struct Director {
     low_for: f32,
     lull_armed: bool,
     surge_armed: bool,
+    /// The theme picked last, and the intensity it was picked on.
+    theme: Option<Theme>,
+    picked_on: f32,
     /// Set when the running hold should end, and how.
     pub cue: Cue,
     pub name: String,
@@ -78,6 +85,8 @@ impl Director {
             low_for: 0.0,
             lull_armed: true,
             surge_armed: true,
+            theme: None,
+            picked_on: 0.0,
             cue: Cue::None,
             name: "-".into(),
         }
@@ -104,6 +113,7 @@ impl Director {
 
     /// A themed cycle is starting: pick its theme and reset the timers.
     pub fn start(&mut self, f: &Features) -> Theme {
+        let chosen = self.want.is_some() || self.locked.is_some();
         let t = self.want.take().or(self.locked).unwrap_or_else(|| self.pick(f));
         self.recent.push(t);
         if self.recent.len() > 4 {
@@ -123,7 +133,20 @@ impl Director {
         self.busy_next = false;
         self.calm_next = false;
         self.name = t.name();
+        self.theme = Some(t);
+        // a theme asked for is never outrun
+        self.picked_on = if chosen { 1.0 } else { f.intensity };
         t
+    }
+
+    /// True when the music runs well hotter than the theme was picked for:
+    /// it was already going when the screensaver came up, before the
+    /// analysis had heard it, or it took off during the intro.
+    fn outrun(&self, f: &Features) -> bool {
+        let Some(t) = self.theme else {
+            return false;
+        };
+        f.intensity > 0.6 && f.intensity - t.busy() > 0.25 && f.intensity - self.picked_on > 0.25
     }
 
     fn pick(&mut self, f: &Features) -> Theme {
@@ -196,6 +219,11 @@ impl Director {
 
         self.cue = if self.force {
             if busy && self.want.is_none() { Cue::Cut } else { Cue::Fade }
+        } else if self.since < OUTRUN && self.outrun(f) {
+            // early in the hold, the music outran the theme: cut to a busy
+            // one now instead of holding a calm one until the next drop
+            self.busy_next = f.intensity > 0.7;
+            Cue::Cut
         } else if (f.drop || surge) && self.since > MIN_CUT {
             self.busy_next = true;
             Cue::Cut
