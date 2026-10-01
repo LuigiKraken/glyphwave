@@ -2,6 +2,7 @@
 //! terminaltexteffects-style animations; while music plays each cycle gets a
 //! theme that makes the banner react to the sound, with a now-playing corner.
 
+mod art;
 mod audio;
 mod canvas;
 mod color;
@@ -29,7 +30,9 @@ USAGE: glyphwave [options]
   --idle            never use the music themes
   --fps N           frame rate (default 30)
   --colors MODE     truecolor or 256 (default: from COLORTERM / TERM)
-  --banner FILE     banner text (default ~/.local/share/kde-screensaver/screensaver.txt)
+  --banner SRC      logo (what fastfetch or neofetch shows), name (the host
+                    name in big letters) or a text file (default: your own
+                    ~/.config/glyphwave/banner.txt, else logo, else name)
   --frames N        exit after N frames (testing)
   --size WxH        render size when stdout isn't a terminal (testing)
   --stats           print frame timing / output size on exit
@@ -40,7 +43,8 @@ USAGE: glyphwave [options]
                     in place of the ribbon, runs only when asked for)
 
 KEYS (interactive): q quit · space play/pause · n next · p previous ·
-  v next theme/effect · i idle/music · d debug
+  v next theme/effect · i idle/music · d debug · l next banner (logo, name,
+  your file)
 MUSIC KEYS (also in --screensaver, without waking it): - previous ·
   + next · Enter play/pause
 ";
@@ -50,7 +54,7 @@ struct Opts {
     demo: bool,
     idle: bool,
     fps: f32,
-    banner: String,
+    banner: Option<String>,
     frames: Option<u64>,
     size: Option<(usize, usize)>,
     stats: bool,
@@ -61,13 +65,12 @@ struct Opts {
 }
 
 fn opts() -> Opts {
-    let home = std::env::var("HOME").unwrap_or_default();
     let mut o = Opts {
         screensaver: false,
         demo: false,
         idle: false,
         fps: 30.0,
-        banner: format!("{home}/.local/share/kde-screensaver/screensaver.txt"),
+        banner: None,
         frames: None,
         size: None,
         stats: false,
@@ -95,7 +98,13 @@ fn opts() -> Opts {
                 }
             },
             "--fps" => o.fps = args.next().and_then(|v| v.parse().ok()).unwrap_or(30.0f32).clamp(5.0, 240.0),
-            "--banner" => o.banner = args.next().unwrap_or_default(),
+            "--banner" => match args.next() {
+                Some(v) if !v.is_empty() => o.banner = Some(v),
+                _ => {
+                    eprintln!("glyphwave: --banner takes logo, name or a file");
+                    std::process::exit(2);
+                }
+            },
             "--frames" => o.frames = args.next().and_then(|v| v.parse().ok()),
             "--size" => {
                 o.size = args.next().and_then(|v| {
@@ -118,6 +127,18 @@ fn opts() -> Opts {
 
 fn main() {
     let o = opts();
+    // before the screen switches, so a warning stays readable
+    let (mut source, text) = art::resolve(o.banner.as_deref());
+    if let Some(b) = &o.banner {
+        if art::Source::parse(b) != source {
+            eprintln!("glyphwave: nothing to show from --banner {b}, using {source}");
+        }
+    }
+    // the file `l` offers: the one asked for, else the own banner.txt
+    let own = match o.banner.as_deref().map(art::Source::parse) {
+        Some(art::Source::File(p)) => p,
+        _ => art::own_banner(),
+    };
     std::panic::set_hook(Box::new(|info| {
         term::emergency_restore();
         eprintln!("glyphwave: {info}");
@@ -142,7 +163,7 @@ fn main() {
     let mut stars = fx::stars::Stars::new();
     let mut rain = fx::rain::Rain::new();
     let mut ribbon = fx::ribbon::Ribbon::new();
-    let mut banner = fx::banner::Banner::load(&o.banner);
+    let mut banner = fx::banner::Banner::new(&art::variants(text));
     let mut dir = scene::Director::new();
     if let Some(th) = &o.theme {
         if let Err(e) = dir.lock(th) {
@@ -210,6 +231,12 @@ fn main() {
                         }
                         b'i' => idle_forced = !idle_forced,
                         b'd' => debug = !debug,
+                        b'l' => {
+                            if let Some((s, t)) = art::next(&source, &own) {
+                                source = s;
+                                banner.swap(&art::variants(t));
+                            }
+                        }
                         _ => {}
                     }
                 }

@@ -1,4 +1,5 @@
-//! The banner (tuxbook, from ~/.local/share/kde-screensaver/screensaver.txt).
+//! The banner: the system logo, the machine's name or the user's art
+//! (`art.rs`), each non-space character one letter the effects move.
 //!
 //! One cycle for both modes: a terminaltexteffects-style intro → a hold → an
 //! outro → the next intro. While it's quiet the hold is a still banner with a
@@ -41,8 +42,14 @@ enum Phase {
 
 const LEAVE: f32 = 0.3;
 
+type Art = Vec<Vec<char>>;
+
 pub struct Banner {
-    lines: Vec<Vec<char>>,
+    /// The art and its smaller stand-ins; layout shows the first that fits.
+    arts: Vec<Art>,
+    /// New art from `swap`, taken up between an outro and the next intro.
+    pending: Option<Vec<Art>>,
+    lines: Art,
     chars: Vec<Ch>,
     bw: usize,
     bh: usize,
@@ -77,38 +84,15 @@ pub struct Banner {
 }
 
 impl Banner {
-    pub fn load(path: &str) -> Banner {
-        let text = std::fs::read_to_string(path).unwrap_or_else(|_| DEFAULT.to_string());
-        Banner::from_text(&text)
-    }
-
-    pub fn from_text(text: &str) -> Banner {
-        let mut lines: Vec<Vec<char>> = text.lines().map(|l| l.trim_end().chars().collect()).collect();
-        while lines.last().is_some_and(|l| l.is_empty()) {
-            lines.pop();
-        }
-        while lines.first().is_some_and(|l| l.is_empty()) {
-            lines.remove(0);
-        }
-        // drop the common left margin
-        let margin = lines
-            .iter()
-            .filter(|l| !l.is_empty())
-            .map(|l| l.iter().take_while(|c| **c == ' ').count())
-            .min()
-            .unwrap_or(0);
-        for l in &mut lines {
-            if l.len() >= margin {
-                l.drain(..margin);
-            }
-        }
-        let bw = lines.iter().map(|l| l.len()).max().unwrap_or(0);
-        let bh = lines.len();
+    /// `texts`: the art, then smaller stand-ins (`art::variants`).
+    pub fn new(texts: &[String]) -> Banner {
         Banner {
-            lines,
+            arts: texts.iter().map(|t| parse(t)).collect(),
+            pending: None,
+            lines: Vec::new(),
             chars: Vec::new(),
-            bw,
-            bh,
+            bw: 0,
+            bh: 0,
             ox: 0,
             oy: 0,
             w: 0,
@@ -139,7 +123,17 @@ impl Banner {
         }
         self.w = w;
         self.h = h;
-        self.fits = self.bw > 0 && self.bw + 2 <= w && self.bh + 2 <= h;
+        // the first art with a cell to spare on each side; failing all, the
+        // last (smallest) one, cut down to its middle
+        let (mw, mh) = (w.saturating_sub(2), h.saturating_sub(2));
+        let art = self.arts.iter().find(|a| size(a).0 <= mw && size(a).1 <= mh);
+        self.lines = match art.or(self.arts.last()) {
+            Some(a) if art.is_some() => a.clone(),
+            Some(a) => crop(a, mw, mh),
+            None => Vec::new(),
+        };
+        (self.bw, self.bh) = size(&self.lines);
+        self.fits = self.bw > 0;
         self.ox = (w as i32 - self.bw as i32) / 2;
         self.oy = (h as i32 - self.bh as i32) / 2;
         let old: Vec<P> = self.chars.iter().map(|c| c.pos).collect();
@@ -224,6 +218,12 @@ impl Banner {
     /// The theme of the running cycle (None while idle).
     pub fn theme(&self) -> Option<Theme> {
         self.theme
+    }
+
+    /// Show other art (`l`): the running cycle ends early through its
+    /// outro, and the next intro brings in the new letters.
+    pub fn swap(&mut self, texts: &[String]) {
+        self.pending = Some(texts.iter().map(|t| parse(t)).collect());
     }
 
     /// End the current idle hold early (`v` while idle).
@@ -389,6 +389,12 @@ impl Banner {
     /// Advance the cycle and draw. `music` says whether the next cycle should
     /// be themed and whether a themed hold may continue.
     pub fn draw(&mut self, cv: &mut Canvas, cx: &Ctx, music: bool, dir: &mut Director, spec: &mut Spectrum) {
+        if matches!(self.phase, Phase::Gap(_)) {
+            if let Some(arts) = self.pending.take() {
+                self.arts = arts;
+                self.w = 0; // lay out again
+            }
+        }
         self.layout(cx.w, cx.h);
         if !self.fits {
             return;
@@ -425,6 +431,9 @@ impl Banner {
                     if music {
                         *t = t.min(0.4); // music started: move on to a themed cycle
                     }
+                    if self.pending.is_some() {
+                        *t = 0.0;
+                    }
                     if *t <= 0.0 {
                         self.start_outro();
                         self.phase = Phase::Outro;
@@ -433,7 +442,7 @@ impl Banner {
                 Some(_) => {
                     self.react = (self.react + dt / 0.8).min(1.0);
                     dir.update(f, dt);
-                    let cue = if !music { Cue::Fade } else { dir.cue };
+                    let cue = if !music || self.pending.is_some() { Cue::Fade } else { dir.cue };
                     if cue != Cue::None && self.waiting.is_none() {
                         // a theme that moves the letters brings them home first
                         self.waiting = Some(cue);
@@ -514,10 +523,58 @@ impl Banner {
     }
 }
 
-const DEFAULT: &str = "\
-      _             _
- __ _| |_  _ _ __ | |_ __ ____ ___ _____
-/ _` | | || | '_ \\| ' \\\\ V  V / _` \\ V / -_)
-\\__, |_|\\_, | .__/|_||_|\\_/\\_/\\__,_|\\_/\\___|
-|___/   |__/|_|
-";
+/// Text to rows of letters: blank lines around it and the common left
+/// margin dropped.
+fn parse(text: &str) -> Art {
+    let mut lines: Art = text.lines().map(|l| l.trim_end().chars().collect()).collect();
+    while lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    while lines.first().is_some_and(|l| l.is_empty()) {
+        lines.remove(0);
+    }
+    let margin = lines
+        .iter()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.iter().take_while(|c| **c == ' ').count())
+        .min()
+        .unwrap_or(0);
+    for l in &mut lines {
+        if l.len() >= margin {
+            l.drain(..margin);
+        }
+    }
+    lines
+}
+
+fn size(a: &Art) -> (usize, usize) {
+    (a.iter().map(|l| l.len()).max().unwrap_or(0), a.len())
+}
+
+/// The middle `w`×`h` of `a`, for art too big even as its smallest stand-in.
+fn crop(a: &Art, w: usize, h: usize) -> Art {
+    let (aw, ah) = size(a);
+    let (x0, y0) = (aw.saturating_sub(w) / 2, ah.saturating_sub(h) / 2);
+    let rows: Vec<String> = a.iter().skip(y0).take(h).map(|l| l.iter().skip(x0).take(w).collect()).collect();
+    parse(&rows.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn picks_the_first_art_that_fits() {
+        let big = format!("{}\n{}\n", "#".repeat(60), "#".repeat(60));
+        let mut b = Banner::new(&[big, "  abc\n  d\n".into(), "x".into()]);
+        b.layout(100, 10);
+        assert_eq!((b.bw, b.bh), (60, 2));
+        b.layout(40, 10);
+        assert_eq!((b.bw, b.bh, b.lines[1].clone()), (3, 2, vec!['d']));
+        b.layout(3, 3);
+        assert_eq!((b.bw, b.bh, b.fits), (1, 1, true));
+        let mut b = Banner::new(&["abcdefghij\nklmnopqrst\n0123456789\n".into()]);
+        b.layout(6, 3);
+        assert_eq!(b.lines, vec!["nopq".chars().collect::<Vec<_>>()]);
+    }
+}
