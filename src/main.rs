@@ -178,6 +178,7 @@ fn main() {
     let mut ribbon_f = Fader::default();
     let mut lift = Fader::default();
     let mut call_f = Fader::default();
+    let mut scene_f = Fader { v: 1.0, target: 1.0 };
     // the last call seen, kept after it ends for the fade-out
     let (mut call, mut call_seen) = (None::<calls::Call>, 0u32);
     let mut idle_layers = [Fader::default(); 2]; // stars, rain
@@ -325,39 +326,55 @@ fn main() {
         let light = 0.8 + 0.2 * f.loud * music.a() + 0.2 * (1.0 - music.a());
         let cx = Ctx { f, w, h, t, dt, palette: &palette, grad: &grad, phase, light };
 
+        // a ringing call: the scene (banner, theme, ribbon, ambience) fades
+        // out wherever it is, then the call view fades in; once that has
+        // faded out again the scene returns with a fresh intro
+        calls.sync(&mut call_seen, &mut call);
+        let ringing = call.as_ref().is_some_and(|c| c.ringing(now));
+        scene_f.target = if ringing || call_f.on() { 0.0 } else { 1.0 };
+        scene_f.step(dt, 0.3);
+        if ringing && !scene_f.on() {
+            banner.drop_cycle();
+        }
+
         // ------------------------------------------------------ compose
         cv.clear();
         for fl in &mut idle_layers {
             fl.step(dt, 2.0);
         }
         idle_layers[1].target = if banner.wants_rain() { 1.0 } else { 0.0 };
-        if idle_layers[1].on() {
-            rain.draw(&mut cv, &cx, idle_layers[1].a());
-        }
-        if idle_layers[0].on() {
-            stars.draw(&mut cv, &cx, idle_layers[0].a());
-        }
-        cv.resolve_dots();
         // the music ribbon runs under every phase; the floor theme has its own bars
         let holding = banner.holding();
         ribbon_f.target = if want_music && holding != Some(fx::themes::Theme::Floor) { 1.0 } else { 0.0 };
         ribbon_f.step(dt, if ribbon_f.target > 0.5 { 0.8 } else { 0.6 });
         lift.target = if holding.is_none() { 1.0 } else { 0.0 };
         lift.step(dt, 0.6);
-        if ribbon_f.on() && banner.fits {
-            let room = (h as i32 - banner.bottom() - 1).max(0) as usize;
-            ribbon.draw(&mut cv, &cx, room, ribbon_f.a(), lift.a(), banner.tint());
+        if scene_f.on() {
+            if idle_layers[1].on() {
+                rain.draw(&mut cv, &cx, idle_layers[1].a());
+            }
+            if idle_layers[0].on() {
+                stars.draw(&mut cv, &cx, idle_layers[0].a());
+            }
+            cv.resolve_dots();
+            if ribbon_f.on() && banner.fits {
+                let room = (h as i32 - banner.bottom() - 1).max(0) as usize;
+                ribbon.draw(&mut cv, &cx, room, ribbon_f.a(), lift.a(), banner.tint());
+            }
+            banner.draw(&mut cv, &cx, want_music, &mut dir, &mut spec);
+            banner.sample(&cv, dt);
+            if scene_f.v < 1.0 {
+                let k = scene_f.a();
+                for y in 0..h as i32 {
+                    for x in 0..w as i32 {
+                        cv.dim(x, y, k);
+                    }
+                }
+            }
         }
-        // a ringing call: the banner makes way (its outro), then the call
-        // view fades in; once it has faded out again the banner comes back
-        calls.sync(&mut call_seen, &mut call);
-        let ringing = call.as_ref().is_some_and(|c| c.ringing(now));
-        banner.away = ringing || call_f.on();
-        banner.draw(&mut cv, &cx, want_music, &mut dir, &mut spec);
-        banner.sample(&cv, dt);
         fx::label::draw(&mut cv, &cx, &track, label_f.a());
-        call_f.target = if ringing && (banner.gone() || !banner.fits) { 1.0 } else { 0.0 };
-        call_f.step(dt, if ringing { 0.4 } else { 0.6 });
+        call_f.target = if ringing && !scene_f.on() { 1.0 } else { 0.0 };
+        call_f.step(dt, if ringing { 0.3 } else { 0.6 });
         if let Some(c) = call.as_ref().filter(|_| call_f.on()) {
             fx::call::draw(&mut cv, &cx, c, call_f.a());
         }
