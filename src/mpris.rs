@@ -235,8 +235,8 @@ impl Watcher {
         let _ = conn.call_method(Some(name.as_str()), PATH, Some(PLAYER), method, &());
     }
 
-    /// Pause `name` later, from another thread (the fade before a call).
-    /// `Pause` or `Play` for `name`, to call later from another thread.
+    /// `Pause` or `Play` for `name`, to call later from another thread (the
+    /// fade around a call).
     pub fn later(&self, name: String, method: &'static str) -> impl FnOnce() + Send + 'static {
         let conn = self.conn.clone();
         move || {

@@ -212,7 +212,6 @@ impl Effect {
         let n = c.home.len();
         let centre = (c.w / 2.0, c.h / 2.0);
         let mut e = Effect { kind: Some(kind), row_shift: vec![0; c.rows], ..Effect::empty() };
-        let hx = |h: u32| h as f32 / u32::MAX as f32;
         let mut anims = Vec::with_capacity(n);
         match kind {
             Kind::Expand => {
@@ -248,7 +247,7 @@ impl Effect {
                     }
                     t0 += span * 0.6;
                 }
-                sort_like(&mut anims, c, |a| a);
+                sort_like(&mut anims, c);
             }
             Kind::Slide => {
                 for i in 0..n {
@@ -529,7 +528,6 @@ impl Effect {
                 }
             }
         }
-        let _ = hx;
         e.anims = anims;
         e.finish()
     }
@@ -677,7 +675,7 @@ fn shuffle<T>(v: &mut [T], rng: &mut Rng) {
 
 /// Anim lists are indexed like the characters; rain builds them per row, so
 /// put them back in character order.
-fn sort_like(anims: &mut Vec<Anim>, c: &Chars, _f: fn(usize) -> usize) {
+fn sort_like(anims: &mut Vec<Anim>, c: &Chars) {
     let n = c.home.len();
     let mut order = Vec::with_capacity(n);
     for r in (0..c.rows).rev() {

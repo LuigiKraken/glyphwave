@@ -2,9 +2,9 @@
 //!
 //! * Display spectrum, once per rendered frame: three Hann-windowed FFTs
 //!   (4096 bass < 250 Hz, 2048 mids < 2.5 kHz, 1024 treble — a cheap
-//!   multi-resolution stack), band power over log-spaced bars, dB with a
-//!   +2 dB/oct tilt (band-summed power: pink noise is already flat, music
-//!   needs a little lift), slow asymmetric auto-gain, cava-style gravity.
+//!   multi-resolution stack), band power over log-spaced bars in dB (no
+//!   tilt: band-summed power already shows pink noise flat), slow
+//!   asymmetric auto-gain, cava-style gravity.
 //! * Onsets and tempo on a fixed 100 Hz hop: SuperFlux (Böck & Widmer 2013,
 //!   max-filtered log-band flux) per kick/snare/hat band, z-score peak picking
 //!   (Böck et al. 2012 online parameters), Ellis 2007 weighted autocorrelation

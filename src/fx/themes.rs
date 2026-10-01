@@ -14,7 +14,7 @@
 //! * wave:    a mirrored waveform rolls in from both screen edges toward the
 //!   banner, faster the busier the music; the letters stay put and light up
 //!   as each swell arrives.
-//! * fire:    character-cell fire (aafire's ramp) rising off the letter tops,
+//! * fire:    character-cell fire (the classic ASCII ramp) rising off the letter tops,
 //!   flame height per column from its band, surging on kicks.
 //! * matrix:  katakana rain, speed from loudness, new streams on hi-hats;
 //!   letters light up where the rain runs through them.
@@ -78,7 +78,7 @@ pub const ALL: [Theme; 10] = [
 const FIRE: [&str; 6] = ["1a0000", "510100", "8A003C", "fe650d", "fff75d", "ffffff"];
 const GREENS: [&str; 3] = ["185318", "3cb043", "92be92"];
 const VHS: [&str; 2] = ["ff3cfa", "3cf0ff"];
-/// aafire's ramp, cold → hot.
+/// The usual ASCII-fire ramp, cold → hot.
 const FLAME: [char; 10] = ['.', ',', ':', '^', '*', 'x', 's', 'S', '#', '$'];
 /// Beam trail, TTE's beams glyphs.
 const BEAM_TRAIL: [char; 3] = ['▂', '▁', '_'];
