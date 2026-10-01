@@ -14,7 +14,19 @@ pub enum Source {
     Logo,
     Name,
     File(String),
+    /// `--test`'s stand-in for own art when there's no banner.txt.
+    Sample,
 }
+
+/// The sample own art `l` shows in `--test` when there's no banner.txt.
+const SAMPLE: &str = "\
++--------------------------------------+
+|                                      |
+|    ~~~   your own art goes here  ~~~ |
+|                                      |
+|    ~/.config/glyphwave/banner.txt    |
+|                                      |
++--------------------------------------+";
 
 impl fmt::Display for Source {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -22,6 +34,7 @@ impl fmt::Display for Source {
             Source::Logo => f.write_str("logo"),
             Source::Name => f.write_str("name"),
             Source::File(p) => f.write_str(p),
+            Source::Sample => f.write_str("sample"),
         }
     }
 }
@@ -46,6 +59,7 @@ impl Source {
             Source::Logo => run("fastfetch", &["-s", "none", "--pipe", "false"]).or_else(|| run("neofetch", &["-L"])),
             Source::Name => Some(big(&hostname())),
             Source::File(p) => std::fs::read_to_string(p).ok().map(|s| strip_ansi(&s)),
+            Source::Sample => Some(SAMPLE.to_string()),
         };
         t.filter(|t| t.chars().any(|c| !c.is_whitespace()))
     }
@@ -79,9 +93,12 @@ pub fn resolve(spec: Option<&str>) -> (Source, String) {
 }
 
 /// For `l`: the next source after `cur` (logo → name → own file) that has
-/// something to show, and its text. `own` is the file `l` offers.
-pub fn next(cur: &Source, own: &str) -> Option<(Source, String)> {
-    let all = [Source::Logo, Source::Name, Source::File(own.to_string())];
+/// something to show, and its text. `own` is the file `l` offers; with
+/// `sample` (`--test`) a missing one shows the sample art instead.
+pub fn next(cur: &Source, own: &str, sample: bool) -> Option<(Source, String)> {
+    let file = Source::File(own.to_string());
+    let third = if sample && file.text().is_none() { Source::Sample } else { file };
+    let all = [Source::Logo, Source::Name, third];
     let i = all.iter().position(|s| s == cur).unwrap_or(2);
     (1..=3).map(|k| all[(i + k) % 3].clone()).find_map(|s| s.text().map(|t| (s, t)))
 }

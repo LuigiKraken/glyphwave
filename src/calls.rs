@@ -153,8 +153,8 @@ struct Slot {
     changes: AtomicU32,
 }
 
-fn ring(slot: &Slot, (app, caller): (String, String), id: u32, gtk: Option<(String, String)>) {
-    *slot.call.lock().unwrap() = Some(Call { app, caller, until: Instant::now() + RING, id, gtk });
+fn ring(slot: &Slot, (app, caller): (String, String), id: u32, gtk: Option<(String, String)>, len: Duration) {
+    *slot.call.lock().unwrap() = Some(Call { app, caller, until: Instant::now() + len, id, gtk });
     slot.changes.fetch_add(1, Ordering::Release);
 }
 
@@ -181,7 +181,7 @@ fn watch(conn: Connection, slot: Arc<Slot>) {
                 let Ok((app, replaces, _, summary, text, _, hints, _)) = body.deserialize::<Notify>() else { continue };
                 match detect(&app, &hint(&hints, "desktop-entry"), &hint(&hints, "category"), &summary, &text) {
                     Some(c) => {
-                        ring(&slot, c, replaces, None);
+                        ring(&slot, c, replaces, None, RING);
                         pending = h.sender().map(|s| (s.to_string(), h.primary().serial_num().get()));
                     }
                     // the ring's notification turned into "missed call" or the like
@@ -206,7 +206,7 @@ fn watch(conn: Connection, slot: Arc<Slot>) {
                 let Ok((app, id, n)) = body.deserialize::<(String, String, Hints)>() else { continue };
                 let key = Some((app.clone(), id));
                 match detect(&app, &app, &hint(&n, "category"), &hint(&n, "title"), &hint(&n, "body")) {
-                    Some(c) => ring(&slot, c, 0, key),
+                    Some(c) => ring(&slot, c, 0, key, RING),
                     None => end_if(&slot, |c| c.gtk == key),
                 }
             }
@@ -260,10 +260,11 @@ impl Calls {
         }
     }
 
-    /// `--test`: ring as if `app` had sent this notification.
+    /// `--test`: ring as if `app` had sent this notification, for 5 s, then
+    /// stop as a missed call does.
     pub fn fake(&self, app: &str, summary: &str, body: &str) {
         if let Some(c) = detect(app, "", "", summary, body) {
-            ring(&self.ring, c, 0, None);
+            ring(&self.ring, c, 0, None, Duration::from_secs(5));
         }
     }
 }

@@ -67,8 +67,10 @@ KEYS (interactive): q quit · space play/pause · n next · p previous ·
 MUSIC KEYS (also in --screensaver, without waking it): - previous ·
   + next · Enter play/pause
 TEST KEYS (--test): 1–0 the themes in the order above · d t s w fake a
-  Discord / Teams / Slack / WhatsApp call · m fake mute · space fake pause ·
-  [ ] calmer / louder demo · o debug (in place of d)
+  Discord / Teams / Slack / WhatsApp call, ringing 5 s (a real player
+  that's playing fades out and back in) · m mute the demo · space pause the demo · [ ] calmer /
+  louder demo · o debug (in place of d) · l also shows sample art when
+  there's no banner.txt
 
 A muted sink, or one at 0 %, counts as paused. While a call rings (read from
 the desktop's call notification) the banner makes way for the app's icon and
@@ -305,7 +307,7 @@ fn main() {
                         b'i' => idle_forced = !idle_forced,
                         b'd' => debug = !debug,
                         b'l' => {
-                            if let Some((s, t)) = art::next(&source, &own) {
+                            if let Some((s, t)) = art::next(&source, &own, o.test) {
                                 source = s;
                                 banner.swap(&art::variants(t));
                             }
@@ -397,11 +399,11 @@ fn main() {
         if ringing && !scene_f.on() {
             banner.drop_cycle();
         }
-        // the player fades out and pauses once (the demo leaves the real one
-        // alone); the ringtone loops while it rings. A ring that ends without
+        // the player fades out and pauses once (--demo leaves the real one
+        // alone, --test's fake calls don't, to try it); the ringtone loops while it rings. A ring that ends without
         // a key (missed, or declined elsewhere) brings the music back, like a
         // phone; a key ends glyphwave first, so answering keeps it paused
-        if ringing && !was_ringing && !o.demo && track.playing() {
+        if ringing && !was_ringing && (!o.demo || o.test) && track.playing() {
             fade = Some(ringer::fade_and_pause(&track.player, watcher.later(track.player.clone(), "Pause")));
             paused_for_call = Some(track.player.clone());
         }
