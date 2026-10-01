@@ -1,8 +1,9 @@
 # glyphwave
 
-A terminal screensaver for Linux. It animates your distro's logo or your
-machine's name with text effects, and turns it into a music visualizer while
-something is playing.
+A screensaver for Linux that runs in a fullscreen terminal. When you step
+away it animates your distro's logo or your machine's name with text effects,
+and while music plays it turns into a visualizer. Touch a key or the mouse
+and it's gone.
 
 ![glyphwave: an idle text effect, three music themes through a drop, and an incoming call](docs/demo.gif)
 
@@ -17,9 +18,10 @@ something is playing.
 
    Or build it yourself with `cargo build --release` (Rust 1.87 or newer).
 
-2. Try it with `glyphwave`. It plays in the current terminal and reacts to
-   whatever is playing. `q` quits. `glyphwave --test` plays a built-in demo
-   track and gives you keys for every theme and a fake call.
+2. Try it with `glyphwave`. This runs it in the current terminal, as a
+   preview, until you press `q`. `glyphwave --test` plays a built-in demo
+   track instead of your music and adds keys for every theme and a fake
+   call.
 
 3. Run `glyphwave setup`. It asks when the screensaver should start, what
    happens after it has run for a while (lock, screen off, sleep, or nothing),
@@ -63,10 +65,16 @@ hostname in big letters, or any text you put in
 
 ## Keys
 
-`q` quits, `v` skips to the next theme or effect, `i` switches between idle
-and music, `l` cycles the banner, and space, `n` and `p` control the player.
-When it runs as the screensaver, the mouse or any key ends it, except the
-music keys (`-`, `+`, Enter) and F1–F12. `glyphwave --help` lists the rest.
+- **As the screensaver**, any key or the mouse ends it, except the music
+  keys: `-` and `+` skip tracks and Enter pauses, without waking it.
+- **Run by hand** (`glyphwave`): `q` quits, `v` skips to the next theme or
+  effect, `i` switches between idle and music, `l` cycles the banner, and
+  space, `n` and `p` control the player.
+- **In `--test`**, also: `1`–`0` pick a theme, `d` `t` `s` `w` fake a
+  Discord, Teams, Slack or WhatsApp call, and `[` `]` make the demo track
+  calmer or louder.
+
+`glyphwave --help` lists everything.
 
 ## What it needs
 
