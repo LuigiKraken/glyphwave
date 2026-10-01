@@ -26,6 +26,12 @@ The terminal is the first installed of the launcher's list; on Fedora that
 is usually Ptyxis (`ptyxis -s --fullscreen`), or gnome-terminal. glyphwave
 exits when GNOME's lock screen comes up (`org.gnome.ScreenSaver`).
 
+`lock_after` in the config: woken after that many minutes, glyphwave runs
+`loginctl lock-session` and closes once GNOME's lock screen is up. With
+`then = lock`, GNOME's blank-and-lock timer still ends the screensaver at
+its time; `then = none` and Screen Blank set to Never leave it running until
+you come back.
+
 Sleep while music plays: players hold off sleep while they play. When they
 let go, gnome-settings-daemon sets its sleep timer again, counted from your
 last input, so if you've been away longer than the timeout it sleeps right
@@ -34,7 +40,7 @@ away. (An app that holds off idle instead, like a video, restarts the count.)
 Starting it by hand: a video, or music in some players, holds off idle, so
 the screensaver never starts on its own. Setup adds an app-menu entry
 (`~/.local/share/applications/glyphwave.desktop`, pin it to the dock) and a
-custom shortcut, `shortcut` in the config (Meta+Ctrl+L, `<Super><Control>l`):
+custom shortcut running `glyphwave launch --now`, `shortcut` in the config (Meta+Ctrl+L, `<Super><Control>l`):
 its path goes into `org.gnome.settings-daemon.plugins.media-keys
 custom-keybindings`, with `name`, `command` and `binding` under
 `.../custom-keybindings/glyphwave/`. It shows in Settings > Keyboard >

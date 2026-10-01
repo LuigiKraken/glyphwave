@@ -1,4 +1,4 @@
-//! `glyphwave setup`: asks four questions, writes ~/.config/glyphwave/config
+//! `glyphwave setup`: asks five questions, writes ~/.config/glyphwave/config
 //! and hooks glyphwave into the desktop's own idle timer: KDE's powerdevilrc,
 //! GNOME's settings plus a tiny idle watcher, or (Hyprland, sway, X11) the
 //! lines to paste; plus an app-menu entry and a key that start it now. Never
@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Clone, Copy, PartialEq)]
-enum Desktop {
+pub enum Desktop {
     Kde,
     Gnome,
     Hyprland,
@@ -36,7 +36,7 @@ fn desktop_name(d: Desktop) -> &'static str {
     DESKTOPS.iter().find(|x| x.1 == d).map_or("", |x| x.2)
 }
 
-fn detect() -> Option<Desktop> {
+pub fn detect() -> Option<Desktop> {
     let env = |k| std::env::var(k).unwrap_or_default();
     if let Some(d) = env("XDG_CURRENT_DESKTOP").split(':').find_map(parse_desktop) {
         return Some(d);
@@ -96,11 +96,26 @@ fn summary(c: &Config) -> String {
         (true, None) => "on battery too".to_string(),
         (true, Some(b)) => format!("on battery {}", t(b)),
     };
-    format!("{}; {bat}; banner {}", t(c.ac), c.banner.as_deref().unwrap_or("(default)"))
+    let lock = match c.lock_after {
+        None => "waking it never locks".to_string(),
+        Some(0) => "waking it always locks".to_string(),
+        Some(m) => format!("waking it after {m} min locks"),
+    };
+    format!("{}; {lock}; {bat}; banner {}", t(c.ac), c.banner.as_deref().unwrap_or("(default)"))
 }
 
 fn questions(mut c: Config) -> Config {
     c.ac = ask_times(c.ac, "");
+    let def = c.lock_after.map_or("none".to_string(), |m| m.to_string());
+    c.lock_after = ask_for(
+        "Waking it after how many minutes takes you to the lock screen? 0 always, none never",
+        &def,
+        "a number of minutes, 0, or none",
+        |a| match a {
+            "none" | "never" => Some(None),
+            _ => a.parse().ok().map(Some),
+        },
+    );
     let def = match (c.on_battery, c.battery) {
         (false, _) => "no",
         (true, None) => "yes",
@@ -311,7 +326,7 @@ fn menu_entry(p: &mut Plan, bin: &Path, kde_key: Option<&str>) {
     let entry = format!(
         "[Desktop Entry]\nType=Application\nName=glyphwave\nComment=Start the screensaver now\nExec={}\n\
          Icon=preferences-desktop-screensaver\nTerminal=false\nCategories=AudioVideo;\n{key}",
-        cmdline(bin, "launch")
+        cmdline(bin, "launch --now")
     );
     p.file(data_dir().join("applications/glyphwave.desktop"), entry);
 }
@@ -465,7 +480,7 @@ fn plan_gnome_key(p: &mut Plan, m: &Manifest, cfg: &Config, bin: &Path) {
             Some(l) if l.contains(GS_KEY_PATH) => l.to_string(),
             Some(l) => format!("{}, '{GS_KEY_PATH}']", l.trim_end_matches(']')),
         };
-        let vals = [list, "'glyphwave'".into(), format!("'{}'", cmdline(bin, "launch")), format!("'{}{k}'", mods.concat())];
+        let vals = [list, "'glyphwave'".into(), format!("'{}'", cmdline(bin, "launch --now")), format!("'{}{k}'", mods.concat())];
         want.iter_mut().zip(vals).for_each(|(w, v)| w.2 = Some(v));
     }
     for (s, k, v) in want {
@@ -552,7 +567,7 @@ fn paste(d: Desktop, cfg: &Config, bin: &Path) -> (&'static str, String) {
             }
             s += "\n# hyprland.conf, for wezterm: windowrulev2 = fullscreen, class:^(glyphwave)$\n";
             if let Some((mods, k)) = cfg.shortcut.as_deref().map(|k| spell(k, ["SUPER", "CTRL", "ALT", "SHIFT"])) {
-                s += &format!("# hyprland.conf, to start it now: bind = {}, {}, exec, {b} launch\n", mods.join(" "), k.to_uppercase());
+                s += &format!("# hyprland.conf, to start it now: bind = {}, {}, exec, {b} launch --now\n", mods.join(" "), k.to_uppercase());
             }
             ("~/.config/hypr/hypridle.conf", s)
         }
@@ -569,7 +584,7 @@ fn paste(d: Desktop, cfg: &Config, bin: &Path) -> (&'static str, String) {
                 stop_lock(&cfg.sway_locker)
             );
             if let Some((mods, k)) = cfg.shortcut.as_deref().map(|k| spell(k, ["Mod4", "Ctrl", "Mod1", "Shift"])) {
-                s += &format!("bindsym {}+{k} exec {b} launch\n", mods.join("+"));
+                s += &format!("bindsym {}+{k} exec {b} launch --now\n", mods.join("+"));
             }
             ("~/.config/sway/config", s)
         }
@@ -587,7 +602,7 @@ fn paste(d: Desktop, cfg: &Config, bin: &Path) -> (&'static str, String) {
             }
             s += "\n";
             if let Some((mods, k)) = cfg.shortcut.as_deref().map(|k| spell(k, ["super", "ctrl", "alt", "shift"])) {
-                s += &format!("\n# to start it now, bind `{b} launch` to a key in your WM, or in sxhkdrc:\n# {} + {k}\n#     {b} launch\n", mods.join(" + "));
+                s += &format!("\n# to start it now, bind `{b} launch --now` to a key in your WM, or in sxhkdrc:\n# {} + {k}\n#     {b} launch --now\n", mods.join(" + "));
             }
             ("your session autostart (e.g. ~/.xinitrc)", s)
         }
@@ -734,6 +749,16 @@ fn setup(desktop: Option<Desktop>, dry: bool) -> i32 {
             plan_gnome_key(&mut p, &m, &cfg, &bin);
         }
         _ => pasted = Some(paste(d, &cfg, &bin)),
+    }
+    if let Some(m) = cfg.lock_after {
+        let wake = if m == 0 { "Waking it locks the screen".to_string() } else { format!("Waking it after {m} min locks the screen") };
+        let key = if m > 0 && cfg.shortcut.is_some() { " (at once when you started it with the key)" } else { "" };
+        let then = [cfg.ac, cfg.bat()].into_iter().filter(|t| t.then == Then::Lock).map(|t| t.after).min();
+        p.notes.push(match then {
+            Some(a) if a <= m => format!("then = lock comes first: at {a} min the lock screen replaces the screensaver, so lock_after = {m} never comes into play."),
+            Some(a) => format!("{wake}{key}; at {a} min the lock screen replaces the screensaver (then = lock)."),
+            None => format!("{wake}{key}."),
+        });
     }
     if [cfg.ac, cfg.bat()].iter().any(|t| t.then == Then::Sleep) {
         p.notes.push(match d {

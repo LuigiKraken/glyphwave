@@ -168,9 +168,27 @@ back. To change your answers, edit `~/.config/glyphwave/config` or run
 and delete `~/.local/bin/glyphwave`.
 
 **The config file** has the general settings at the top (`start_after`,
-`then`, `then_after`, `on_battery`, `banner`, `fps`) and optional sections
+`then`, `then_after`, `lock_after`, `on_battery`, `banner`, `fps`) and optional sections
 below, commented out: shorter times on battery, which terminal to open (and a
 Konsole profile, if you made one), and the locker for Hyprland, sway and X11.
+
+**Locking when you come back.** `lock_after` is a grace period, in minutes
+from the screensaver's start. A key or the mouse within it closes the
+screensaver onto the desktop; after it, glyphwave locks the session first and
+closes once the lock screen is up (it waits at most 2 s), so you land on the
+lock screen. `0` always locks; `none`, the default, never does. Started with
+the start-now key or the app-menu entry (`glyphwave launch --now`), it locks
+when woken whenever `lock_after` is set. Only waking it counts: when the
+desktop closes it (`launch --stop`, its own lock screen) nothing extra
+happens. A call is no exception: the key you press to answer locks too, past
+the grace period. It's one value for both power states and counts time
+asleep. On KDE and GNOME it locks through logind (`loginctl lock-session`),
+which both lock screens answer; on Hyprland, sway and X11 it runs the
+`locker` from the config. `then = lock` still works as before: at
+`then_after` the desktop locks and the screensaver ends. To keep the
+screensaver up for longer and still have it lock, pair `lock_after` with
+`then = screen-off` or `none` (and on KDE turn off its own lock timer, which
+setup warns about).
 
 ## What a system needs
 

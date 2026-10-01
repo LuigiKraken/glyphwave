@@ -58,6 +58,9 @@ pub struct Config {
     pub x11_locker: String,
     /// the key that starts it now; None = no key
     pub shortcut: Option<String>,
+    /// minutes into the screensaver after which dismissing it lands on the
+    /// lock screen; Some(0) = always, None = never
+    pub lock_after: Option<u32>,
 }
 
 impl Default for Config {
@@ -75,6 +78,7 @@ impl Default for Config {
             sway_locker: "swaylock -f".into(),
             x11_locker: "i3lock -c 000000".into(),
             shortcut: Some("Meta+Ctrl+L".into()),
+            lock_after: None,
         }
     }
 }
@@ -105,6 +109,14 @@ fn minutes(v: &str) -> Result<u32, String> {
     match v.parse::<u32>() {
         Ok(n) if n > 0 => Ok(n),
         _ => Err(format!("{v:?} isn't a number of minutes")),
+    }
+}
+
+/// `lock_after`: minutes, 0 included, or none.
+fn lock_minutes(v: &str) -> Result<Option<u32>, String> {
+    match v {
+        "none" => Ok(None),
+        _ => v.parse::<u32>().map(Some).map_err(|_| format!("lock_after is a number of minutes (0 for always) or none, not {v:?}")),
     }
 }
 
@@ -162,6 +174,7 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             ("", "shortcut") => set(&mut c.shortcut, if v == "none" { String::new() } else { v }),
             ("", "fps") => v.parse::<f32>().map(|f| c.fps = Some(f)).map_err(|_| format!("fps {v:?} isn't a number")),
             ("", "ringtone") => set(&mut c.ringtone, v),
+            ("", "lock_after") => lock_minutes(&v).map(|m| c.lock_after = m),
             ("battery", "start_after") => minutes(&v).map(|m| bs = Some(m)),
             ("battery", "then") => then(&v).map(|t| bt = Some(t)),
             ("battery", "then_after") => minutes(&v).map(|m| ba = Some(m)),
@@ -190,16 +203,24 @@ impl Config {
         self.battery.unwrap_or(self.ac)
     }
 
+    /// Whether dismissing the screensaver after `secs` of it should lock:
+    /// past lock_after, or at once when it was started by hand (`now`).
+    pub fn locks(&self, now: bool, secs: f64) -> bool {
+        self.lock_after.is_some_and(|m| now || secs >= m as f64 * 60.0)
+    }
+
     /// The file setup writes: the general settings, then the optional
     /// sections, commented out unless they hold something.
     pub fn render(&self) -> String {
         let mut s = String::from(
             "# glyphwave — edit, then run `glyphwave setup` again to apply.\n\
-             # Times are minutes. The later step counts from the screensaver's start.\n\n",
+             # Times are minutes. then_after and lock_after count from the screensaver's start.\n\n",
         );
         s += &format!("start_after = {}\n", self.ac.start);
         s += &format!("then = {}                # lock, screen-off, sleep or none\n", self.ac.then.name());
         s += &format!("then_after = {}\n", self.ac.after);
+        let lock = self.lock_after.map_or("none".to_string(), |m| m.to_string());
+        s += &format!("lock_after = {lock}          # after this many minutes, waking it lands on the lock screen; 0 always, none never\n");
         s += &format!("on_battery = {}            # no: only when plugged in\n", if self.on_battery { "yes" } else { "no" });
         match &self.banner {
             Some(b) => s += &format!("banner = {b}\n"),
@@ -327,6 +348,7 @@ mod tests {
             konsole_profile: Some("Glyphwave".into()),
             x11_locker: "slock".into(),
             shortcut: None,
+            lock_after: Some(0),
             ..Config::default()
         };
         let (back, e) = parse(&c.render());
@@ -334,5 +356,30 @@ mod tests {
         assert_eq!(back, c);
         let d = Config { fps: Some(30.0), ..Config::default() };
         assert_eq!(parse(&d.render()).0, d);
+        let d = Config { lock_after: Some(15), ..d };
+        assert_eq!(parse(&d.render()).0, d);
+    }
+
+    #[test]
+    fn lock_after() {
+        let (c, e) = parse("lock_after = 0\n");
+        assert!(e.is_empty(), "{e:?}");
+        assert_eq!(c.lock_after, Some(0));
+        assert_eq!(parse("lock_after = 20\n").0.lock_after, Some(20));
+        assert_eq!(parse("lock_after = 5\nlock_after = none\n").0.lock_after, None);
+        let (c, e) = parse("lock_after = soon\n[battery]\nlock_after = 1\n");
+        assert_eq!(e.len(), 2, "{e:?}");
+        assert_eq!(c.lock_after, None);
+    }
+
+    #[test]
+    fn locks_on_dismiss() {
+        let at = |m| Config { lock_after: m, ..Config::default() };
+        assert!(!at(None).locks(false, 1e6));
+        assert!(!at(None).locks(true, 0.0)); // started by hand, but no locking asked for
+        assert!(at(Some(0)).locks(false, 0.0));
+        assert!(!at(Some(5)).locks(false, 299.0));
+        assert!(at(Some(5)).locks(false, 300.0));
+        assert!(at(Some(5)).locks(true, 1.0));
     }
 }
