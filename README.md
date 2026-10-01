@@ -24,15 +24,22 @@ mouse and it's gone.
    track instead of your music and adds keys for every theme and a fake
    call.
 
-3. Run `glyphwave setup`. It asks when the screensaver should start, what
-   happens after it has run for a while (lock, screen off, sleep, or nothing),
-   whether coming back after a while should take you to the lock screen,
-   whether it runs on battery, and which banner to use. Then it hooks itself
+3. Run `glyphwave setup`. It asks in the order things happen: how long
+   you're idle before it starts, how long it runs (or forever), and what
+   comes after that (lock, screen off or sleep). Then whether the screen
+   dims while it runs, whether waking it takes you to the lock screen, whether
+   it runs on battery, and which banner to use. `b` goes back a question.
+   Before it changes anything it sums up your answers in one line, such as
+   "Idle for 5 min → glyphwave runs for 10 min → then it locks". Then it hooks itself
    into your desktop's own idle timer (KDE, GNOME, Hyprland, sway or X11). It
    lists every file it will change before it writes anything, and
    `glyphwave setup --remove` puts them all back. It never needs root and
    only writes to your home folder. To uninstall, run that and delete
    `~/.local/bin/glyphwave`.
+
+To update, run the command from step 1 again. It replaces the binary and
+leaves your settings alone. Run `glyphwave setup` again only if a release
+says it added a question.
 
 Videos and some players hold off the idle timer, so for music you can start
 it yourself with Meta+Ctrl+L (next to Meta+L for lock) or from the app menu.

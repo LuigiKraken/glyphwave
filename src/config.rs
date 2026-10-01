@@ -33,6 +33,33 @@ impl Then {
     }
 }
 
+/// Whether the desktop dims the screen while it runs (KDE).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Dim {
+    No,
+    Yes,
+    Battery,
+}
+
+impl Dim {
+    pub fn parse(s: &str) -> Option<Dim> {
+        Some(match s {
+            "no" => Dim::No,
+            "yes" => Dim::Yes,
+            "battery" => Dim::Battery,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Dim::No => "no",
+            Dim::Yes => "yes",
+            Dim::Battery => "battery",
+        }
+    }
+}
+
 /// Minutes: start the screensaver after `start` idle, then act `after` later.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Times {
@@ -61,6 +88,7 @@ pub struct Config {
     /// minutes into the screensaver after which dismissing it lands on the
     /// lock screen; Some(0) = always, None = never
     pub lock_after: Option<u32>,
+    pub dim: Dim,
 }
 
 impl Default for Config {
@@ -79,6 +107,7 @@ impl Default for Config {
             x11_locker: "i3lock -c 000000".into(),
             shortcut: Some("Meta+Ctrl+L".into()),
             lock_after: None,
+            dim: Dim::No,
         }
     }
 }
@@ -175,6 +204,7 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             ("", "fps") => v.parse::<f32>().map(|f| c.fps = Some(f)).map_err(|_| format!("fps {v:?} isn't a number")),
             ("", "ringtone") => set(&mut c.ringtone, v),
             ("", "lock_after") => lock_minutes(&v).map(|m| c.lock_after = m),
+            ("", "dim") => Dim::parse(&v).map(|d| c.dim = d).ok_or(format!("dim is yes, no or battery, not {v:?}")),
             ("battery", "start_after") => minutes(&v).map(|m| bs = Some(m)),
             ("battery", "then") => then(&v).map(|t| bt = Some(t)),
             ("battery", "then_after") => minutes(&v).map(|m| ba = Some(m)),
@@ -222,6 +252,7 @@ impl Config {
         let lock = self.lock_after.map_or("none".to_string(), |m| m.to_string());
         s += &format!("lock_after = {lock}          # after this many minutes, waking it lands on the lock screen; 0 always, none never\n");
         s += &format!("on_battery = {}            # no: only when plugged in\n", if self.on_battery { "yes" } else { "no" });
+        s += &format!("dim = {}                   # dim the screen while it runs: yes, no or battery (KDE)\n", self.dim.name());
         match &self.banner {
             Some(b) => s += &format!("banner = {b}\n"),
             None => s += "# banner = logo         # logo, name, or a path to a text file\n",
@@ -349,6 +380,7 @@ mod tests {
             x11_locker: "slock".into(),
             shortcut: None,
             lock_after: Some(0),
+            dim: Dim::Battery,
             ..Config::default()
         };
         let (back, e) = parse(&c.render());

@@ -1,11 +1,11 @@
-//! `glyphwave setup`: asks five questions, writes ~/.config/glyphwave/config
+//! `glyphwave setup`: asks a few questions, writes ~/.config/glyphwave/config
 //! and hooks glyphwave into the desktop's own idle timer: KDE's powerdevilrc,
 //! GNOME's settings plus a tiny idle watcher, or (Hyprland, sway, X11) the
 //! lines to paste; plus an app-menu entry and a key that start it now. Never
 //! root: it only writes to the home folder, lists every change first, and
 //! keeps the originals so `--remove` puts them back exactly.
 
-use crate::config::{self, Config, Then, Times};
+use crate::config::{self, Config, Dim, Then, Times};
 use crate::launch;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -78,59 +78,132 @@ fn ask_yes(q: &str) -> bool {
     })
 }
 
-fn ask_times(t: Times, what: &str) -> Times {
-    let mins = |a: &str| a.parse::<u32>().ok().filter(|&n| n > 0);
-    let start = ask_for(&format!("Start after how many idle minutes{what}?"), &t.start.to_string(), "a number, 1 or more", mins);
-    let then = ask_for("Then: lock, screen-off, sleep or none?", t.then.name(), "lock, screen-off, sleep or none", Then::parse);
-    let after = match then {
-        Then::Nothing => t.after,
-        _ => ask_for("How many minutes after the screensaver starts?", &t.after.to_string(), "a number, 1 or more", mins),
-    };
-    Times { start, then, after }
+/// Like `ask_for`, but `b` goes back a question: None.
+fn ask_step<T>(q: &str, def: &str, hint: &str, parse: impl Fn(&str) -> Option<T>) -> Option<T> {
+    ask_for(q, def, &format!("{hint}, or b to go back"), |a| if a == "b" { Some(None) } else { parse(a).map(Some) })
+}
+
+fn mins(a: &str) -> Option<u32> {
+    a.parse().ok().filter(|&n| n > 0)
+}
+
+fn ask_start(t: &mut Times, what: &str) -> Option<()> {
+    t.start = ask_step(&format!("Start after how many idle minutes{what}?"), &t.start.to_string(), "a number, 1 or more", mins)?;
+    Some(())
+}
+
+/// How long it runs; forever means nothing comes after it.
+fn ask_run(t: &mut Times) -> Option<()> {
+    let def = if t.then == Then::Nothing { "forever".to_string() } else { t.after.to_string() };
+    let run = ask_step("Run for how many minutes? (forever keeps it up)", &def, "a number, 1 or more, or forever", |a| match a {
+        "forever" | "none" => Some(None),
+        _ => mins(a).map(Some),
+    })?;
+    match run {
+        None => t.then = Then::Nothing,
+        Some(m) => {
+            t.after = m;
+            if t.then == Then::Nothing {
+                t.then = Then::Lock;
+            }
+        }
+    }
+    Some(())
+}
+
+fn ask_then(t: &mut Times) -> Option<()> {
+    let q = format!("When it's done running for {} min: lock, screen-off or sleep?", t.after);
+    t.then = ask_step(&q, t.then.name(), "lock, screen-off or sleep", |a| Then::parse(a).filter(|&t| t != Then::Nothing))?;
+    Some(())
 }
 
 fn summary(c: &Config) -> String {
-    let t = |t: Times| format!("start after {} min, then {} {} min later", t.start, t.then.name(), t.after);
+    let t = |t: Times| match t.then {
+        Then::Nothing => format!("start after {} min, run until you come back", t.start),
+        _ => format!("start after {} min, run {} min, then {}", t.start, t.after, t.then.name()),
+    };
     let bat = match (c.on_battery, c.battery) {
         (false, _) => "only plugged in".to_string(),
         (true, None) => "on battery too".to_string(),
         (true, Some(b)) => format!("on battery {}", t(b)),
     };
-    let lock = match c.lock_after {
+    format!("{}; {}; dim {}; {bat}; banner {}", t(c.ac), wake(c.lock_after), c.dim.name(), c.banner.as_deref().unwrap_or("(default)"))
+}
+
+fn wake(lock_after: Option<u32>) -> String {
+    match lock_after {
         None => "waking it never locks".to_string(),
         Some(0) => "waking it always locks".to_string(),
         Some(m) => format!("waking it after {m} min locks"),
-    };
-    format!("{}; {lock}; {bat}; banner {}", t(c.ac), c.banner.as_deref().unwrap_or("(default)"))
+    }
 }
 
-fn questions(mut c: Config) -> Config {
-    c.ac = ask_times(c.ac, "");
-    let def = c.lock_after.map_or("none".to_string(), |m| m.to_string());
-    c.lock_after = ask_for(
-        "Waking it after how many minutes takes you to the lock screen? 0 always, none never",
-        &def,
-        "a number of minutes, 0, or none",
-        |a| match a {
-            "none" | "never" => Some(None),
-            _ => a.parse().ok().map(Some),
-        },
-    );
-    let def = match (c.on_battery, c.battery) {
-        (false, _) => "no",
-        (true, None) => "yes",
-        _ => "own",
-    };
-    let a = ask_for("On battery too? yes, no, or own (other times)", def, "yes, no or own", |a| {
-        ["yes", "no", "own"].contains(&a).then(|| a.to_string())
-    });
-    c.on_battery = a != "no";
-    c.battery = None;
-    if a == "own" {
-        let b = ask_times(c.ac, " on battery");
-        c.battery = Some(b).filter(|b| *b != c.ac);
+/// The questions in the order things happen; `b` steps back through the
+/// ones that were asked.
+fn questions(mut c: Config, d: Desktop) -> Config {
+    println!("Answers in [brackets] are the default; b goes back a question.");
+    let mut own = c.battery.is_some();
+    let mut bat = c.bat();
+    let mut asked: Vec<usize> = Vec::new();
+    let mut i = 0;
+    while i < 10 {
+        let r = match i {
+            0 => ask_start(&mut c.ac, ""),
+            1 => ask_run(&mut c.ac),
+            2 if c.ac.then != Then::Nothing => ask_then(&mut c.ac),
+            3 if d == Desktop::Kde => {
+                let q = "Dim the screen while it runs? yes, no, or battery (only on battery)";
+                ask_step(q, c.dim.name(), "yes, no or battery", Dim::parse).map(|v| c.dim = v)
+            }
+            4 => {
+                let def = c.lock_after.map_or("never".to_string(), |m| if m == 0 { "always".to_string() } else { m.to_string() });
+                let q = "When you wake it, go to the lock screen? always, never, or after N min";
+                ask_step(q, &def, "always, never, or a number of minutes", |a| match a {
+                    "always" | "0" => Some(Some(0)),
+                    "never" | "none" => Some(None),
+                    _ => a.trim_start_matches("after").trim_end_matches("min").trim().parse().ok().map(Some),
+                })
+                .map(|v| c.lock_after = v)
+            }
+            5 => {
+                let def = match (c.on_battery, own) {
+                    (false, _) => "no",
+                    (true, false) => "yes",
+                    _ => "own",
+                };
+                ask_step("On battery too? yes, no, or own (other times)", def, "yes, no or own", |a| {
+                    ["yes", "no", "own"].contains(&a).then(|| a.to_string())
+                })
+                .map(|a| {
+                    if a == "own" && !own {
+                        bat = c.ac;
+                    }
+                    c.on_battery = a != "no";
+                    own = a == "own";
+                })
+            }
+            6 if own => ask_start(&mut bat, " on battery"),
+            7 if own => ask_run(&mut bat),
+            8 if own && bat.then != Then::Nothing => ask_then(&mut bat),
+            9 => {
+                // asked as typed: a path keeps its case
+                let a = ask("Banner: logo, name, or the path to a text file?", c.banner.as_deref().unwrap_or("logo"));
+                (a != "b").then(|| c.banner = Some(a))
+            }
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        match r {
+            Some(()) => {
+                asked.push(i);
+                i += 1;
+            }
+            None => i = asked.pop().unwrap_or(0),
+        }
     }
-    c.banner = Some(ask("Banner: logo, name, or the path to a text file?", c.banner.as_deref().unwrap_or("logo")));
+    c.battery = Some(bat).filter(|b| own && *b != c.ac);
     c
 }
 
@@ -384,7 +457,7 @@ fn plan_kde(p: &mut Plan, m: &Manifest, cfg: &Config, bin: &Path) {
     for prof in ["AC", "Battery"] {
         owned.push((format!("{prof}][RunScript"), "IdleTimeoutCommand"));
         owned.push((format!("{prof}][RunScript"), "RunScriptIdleTimeoutSec"));
-        owned.extend(KDE_TIMERS[1..].iter().flat_map(|r| [(format!("{prof}][{}", r.0), r.1), (format!("{prof}][{}", r.0), r.3)]));
+        owned.extend(KDE_TIMERS.iter().flat_map(|r| [(format!("{prof}][{}", r.0), r.1), (format!("{prof}][{}", r.0), r.3)]));
     }
     let t = kconfig(p, m, config::dir().join("powerdevilrc"), &owned, |mut t| {
         for (prof, tm) in &profiles {
@@ -392,6 +465,13 @@ fn plan_kde(p: &mut Plan, m: &Manifest, cfg: &Config, bin: &Path) {
             let mut set = |g: &str, k: &str, v: &str| t = ini_set(&t, &format!("{prof}][{g}"), k, Some(v));
             set("RunScript", "IdleTimeoutCommand", &cmdline(bin, "launch"));
             set("RunScript", "RunScriptIdleTimeoutSec", &(tm.start * 60).to_string());
+            // dim from the screensaver's start, or not at all
+            if cfg.dim == Dim::Yes || (cfg.dim == Dim::Battery && *prof == "Battery") {
+                set("Display", "DimDisplayWhenIdle", "true");
+                set("Display", "DimDisplayIdleTimeoutSec", &(tm.start * 60).to_string());
+            } else {
+                set("Display", "DimDisplayWhenIdle", "false");
+            }
             match tm.then {
                 Then::ScreenOff => {
                     set("Display", "TurnOffDisplayWhenIdle", "true");
@@ -407,7 +487,7 @@ fn plan_kde(p: &mut Plan, m: &Manifest, cfg: &Config, bin: &Path) {
         t
     });
     for (prof, tm) in &profiles {
-        for (g, sw, off, key, ac, bat, what) in KDE_TIMERS {
+        for &(g, sw, off, key, ac, bat, what) in &KDE_TIMERS[1..] {
             let g = format!("{prof}][{g}");
             if ini_get(&t, &g, sw).as_deref() != Some(off) {
                 let secs = ini_get(&t, &g, key).and_then(|v| v.parse().ok()).unwrap_or(if *prof == "AC" { ac } else { bat });
@@ -593,7 +673,8 @@ fn paste(d: Desktop, cfg: &Config, bin: &Path) -> (&'static str, String) {
             let then = match t.then {
                 Then::Lock => stop_lock(&cfg.x11_locker),
                 Then::ScreenOff => "xset dpms force off".into(),
-                Then::Sleep => "systemctl suspend".into(),
+                // nothing locks on suspend under plain X11; the locker forks (i3lock does)
+                Then::Sleep => format!("{}; systemctl suspend", stop_lock(&cfg.x11_locker)),
                 Then::Nothing => String::new(),
             };
             let mut s = format!("xidlehook --timer {start} '{b} launch' ''");
@@ -607,6 +688,46 @@ fn paste(d: Desktop, cfg: &Config, bin: &Path) -> (&'static str, String) {
             ("your session autostart (e.g. ~/.xinitrc)", s)
         }
     }
+}
+
+/// Whether waking from sleep shows the lock screen: KDE's and GNOME's own
+/// switches; the Hyprland, sway and X11 lines lock before sleep themselves.
+fn sleep_locks(d: Desktop) -> bool {
+    match d {
+        Desktop::Kde => {
+            let t = std::fs::read_to_string(config::dir().join("kscreenlockerrc")).unwrap_or_default();
+            ini_get(&t, "Daemon", "LockOnResume").as_deref() != Some("false")
+        }
+        Desktop::Gnome => gs_user(GS_LOCK, "lock-enabled").as_deref() != Some("false"),
+        _ => true,
+    }
+}
+
+/// The answers as one line per power state, each step counted from the one
+/// before: "Idle for 5 min → glyphwave runs for 10 min → then it locks."
+fn timeline(c: &Config, d: Desktop) -> Vec<String> {
+    let line = |t: Times, dim: bool| {
+        let runs = if dim { "glyphwave runs dimmed" } else { "glyphwave runs" };
+        let then = match t.then {
+            Then::Nothing => return format!("Idle for {} min → {runs} until you come back.", t.start),
+            Then::Lock => "it locks",
+            Then::ScreenOff => "the screen turns off",
+            Then::Sleep if sleep_locks(d) => "it sleeps (locked when it wakes)",
+            Then::Sleep => "it sleeps (without locking)",
+        };
+        format!("Idle for {} min → {runs} for {} min → then {then}.", t.start, t.after)
+    };
+    let dim = |bat: bool| d == Desktop::Kde && (c.dim == Dim::Yes || (c.dim == Dim::Battery && bat));
+    let mut v = if c.on_battery && (c.battery.is_some() || dim(true) != dim(false)) {
+        vec![format!("Plugged in: {}", line(c.ac, dim(false))), format!("On battery: {}", line(c.bat(), dim(true)))]
+    } else if c.on_battery {
+        vec![line(c.ac, dim(false))]
+    } else {
+        vec![format!("Plugged in: {} Not on battery.", line(c.ac, dim(false)))]
+    };
+    let w = wake(c.lock_after);
+    v.push(format!("{}{}.", w[..1].to_uppercase(), &w[1..]));
+    v
 }
 
 // ------------------------------------------------------------------ show, apply, undo
@@ -724,9 +845,9 @@ fn setup(desktop: Option<Desktop>, dry: bool) -> i32 {
     let cfg = match config::load() {
         Some(c) => {
             println!("Settings in {}: {}", tilde(&config::path()), summary(&c));
-            if ask("Use these? (n asks again)", "Y/n").to_lowercase() == "n" { questions(c) } else { c }
+            if ask("Use these? (n asks again)", "Y/n").to_lowercase() == "n" { questions(c, d) } else { c }
         }
-        None => questions(Config::default()),
+        None => questions(Config::default(), d),
     };
 
     let mut p = Plan::default();
@@ -750,15 +871,12 @@ fn setup(desktop: Option<Desktop>, dry: bool) -> i32 {
         }
         _ => pasted = Some(paste(d, &cfg, &bin)),
     }
-    if let Some(m) = cfg.lock_after {
-        let wake = if m == 0 { "Waking it locks the screen".to_string() } else { format!("Waking it after {m} min locks the screen") };
-        let key = if m > 0 && cfg.shortcut.is_some() { " (at once when you started it with the key)" } else { "" };
+    // the timeline says the rest; only a lock_after that can't happen needs a word
+    if let Some(m) = cfg.lock_after.filter(|&m| m > 0) {
         let then = [cfg.ac, cfg.bat()].into_iter().filter(|t| t.then == Then::Lock).map(|t| t.after).min();
-        p.notes.push(match then {
-            Some(a) if a <= m => format!("then = lock comes first: at {a} min the lock screen replaces the screensaver, so lock_after = {m} never comes into play."),
-            Some(a) => format!("{wake}{key}; at {a} min the lock screen replaces the screensaver (then = lock)."),
-            None => format!("{wake}{key}."),
-        });
+        if let Some(a) = then.filter(|&a| a <= m) {
+            p.notes.push(format!("It locks after running {a} min anyway, so \"after {m} min\" for waking it never comes into play."));
+        }
     }
     if [cfg.ac, cfg.bat()].iter().any(|t| t.then == Then::Sleep) {
         p.notes.push(match d {
@@ -769,6 +887,9 @@ fn setup(desktop: Option<Desktop>, dry: bool) -> i32 {
     }
 
     println!();
+    for l in timeline(&cfg, d) {
+        println!("{l}");
+    }
     for w in &p.warnings {
         println!("Warning: {w}");
     }

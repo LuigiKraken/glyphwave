@@ -163,12 +163,24 @@ music stops.
 
 It never needs root and never installs packages. It only writes to your home
 folder, keeps the originals, and `glyphwave setup --remove` puts everything
-back. To change your answers, edit `~/.config/glyphwave/config` or run
+back.
+
+The questions follow the order things happen: idle minutes before it starts
+(`start_after`), how long it runs (`then_after`, or `forever` for
+`then = none`), what comes after (`then`), whether the screen dims while it
+runs (`dim`, KDE), whether waking it locks (`lock_after`), battery, banner.
+`b` goes back a question. Before the list of changes it prints the answers as
+a timeline in which each step counts from the one before. Sleep shows
+whether the computer comes back locked: on KDE that's Lock after waking from
+sleep (`LockOnResume`), on GNOME the Screen Lock switch, and the Hyprland,
+sway and X11 lines setup prints lock before suspending.
+
+To change your answers, edit `~/.config/glyphwave/config` or run
 `glyphwave setup` again. To remove glyphwave, run `glyphwave setup --remove`
 and delete `~/.local/bin/glyphwave`.
 
 **The config file** has the general settings at the top (`start_after`,
-`then`, `then_after`, `lock_after`, `on_battery`, `banner`, `fps`) and optional sections
+`then`, `then_after`, `lock_after`, `on_battery`, `dim`, `banner`, `fps`) and optional sections
 below, commented out: shorter times on battery, which terminal to open (and a
 Konsole profile, if you made one), and the locker for Hyprland, sway and X11.
 
