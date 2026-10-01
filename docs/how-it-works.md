@@ -171,7 +171,8 @@ happen: idle minutes before it starts (`start_after`), how long it runs
 (`then_after`, or `forever` for `then = none`), whether coming back while it
 runs shows the lock screen (`lock_after`), what comes after the run (`then`,
 sleep by default), battery (the same times, off, or different times asked
-again), and whether the screen dims while it runs (`dim`, KDE).
+again), and whether the screen dims while it runs (`dim`, KDE; only on battery
+by default).
 `b` goes back a question. Before the list of changes it prints the answers as
 a timeline in which each step counts from the one before. Sleep shows
 whether the computer comes back locked: on KDE that's Lock after waking from

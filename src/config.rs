@@ -107,7 +107,7 @@ impl Default for Config {
             x11_locker: "i3lock -c 000000".into(),
             shortcut: Some("Meta+Ctrl+L".into()),
             lock_after: None,
-            dim: Dim::No,
+            dim: Dim::Battery,
         }
     }
 }
@@ -380,7 +380,7 @@ mod tests {
             x11_locker: "slock".into(),
             shortcut: None,
             lock_after: Some(0),
-            dim: Dim::Battery,
+            dim: Dim::No,
             ..Config::default()
         };
         let (back, e) = parse(&c.render());
@@ -390,6 +390,16 @@ mod tests {
         assert_eq!(parse(&d.render()).0, d);
         let d = Config { lock_after: Some(15), ..d };
         assert_eq!(parse(&d.render()).0, d);
+    }
+
+    #[test]
+    fn dim_defaults_to_battery() {
+        assert_eq!(parse("start_after = 5\n").0.dim, Dim::Battery);
+        assert_eq!(parse("dim = no\n").0.dim, Dim::No);
+        assert_eq!(parse("dim = yes\n").0.dim, Dim::Yes);
+        let (c, e) = parse("dim = sometimes\n");
+        assert_eq!(e.len(), 1, "{e:?}");
+        assert_eq!(c.dim, Dim::Battery);
     }
 
     #[test]
