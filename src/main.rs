@@ -29,16 +29,20 @@ glyphwave — terminal screensaver + music visualizer
 
 USAGE: glyphwave [options]
        glyphwave setup [--remove] [--dry-run] [--desktop NAME]
-       glyphwave launch [--stop]
+       glyphwave launch [--stop] [--now]
 
   setup             ask when to start and what comes after, then hook glyphwave
                     into the desktop's idle timer (KDE, GNOME, Hyprland, sway,
                     X11); lists every file first. --remove puts it all back
   launch            open the screensaver fullscreen in a terminal, once; what
-                    the idle timer runs. --stop closes it (before a locker)
+                    the idle timer runs. --stop closes it (before a locker),
+                    --now is the start-now key's
 
   --screensaver     exit on mouse motion, on any key but F1–F12 and the
-                    music keys, or when the KDE/GNOME locker takes over
+                    music keys, or when the KDE/GNOME locker takes over;
+                    woken after lock_after minutes, it locks the screen first
+  --now             with --screensaver: started by hand, so waking it locks
+                    at once if lock_after is set (launch --now passes it on)
   --demo            play a built-in synthetic track instead of the sound card
   --test            try things out in this terminal: --demo and --debug,
                     plus the TEST KEYS below
@@ -96,6 +100,9 @@ struct Opts {
     theme: Option<String>,
     truecolor: bool,
     console: bool,
+    /// started by hand (the start-now key): waking it locks at once
+    now: bool,
+    cfg: config::Config,
 }
 
 fn opts() -> Opts {
@@ -106,8 +113,8 @@ fn opts() -> Opts {
         test: false,
         idle: false,
         fps: cfg.fps.unwrap_or(30.0).clamp(5.0, 240.0),
-        banner: cfg.banner,
-        ringtone: cfg.ringtone,
+        banner: cfg.banner.clone(),
+        ringtone: cfg.ringtone.clone(),
         frames: None,
         size: None,
         stats: false,
@@ -116,11 +123,14 @@ fn opts() -> Opts {
         theme: None,
         truecolor: term::truecolor(),
         console: std::env::var("TERM").is_ok_and(|t| t == "linux"),
+        now: false,
+        cfg,
     };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--screensaver" => o.screensaver = true,
+            "--now" => o.now = true,
             "--demo" => o.demo = true,
             "--test" => (o.test, o.demo, o.debug) = (true, true, true),
             "--idle" => o.idle = true,
@@ -162,6 +172,13 @@ fn opts() -> Opts {
         }
     }
     o
+}
+
+/// Seconds since boot, sleep included (Instant leaves it out).
+fn boot_secs() -> f64 {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut ts) };
+    ts.tv_sec as f64 + ts.tv_nsec as f64 * 1e-9
 }
 
 fn main() {
@@ -251,6 +268,8 @@ fn main() {
 
     let frame_dt = Duration::from_secs_f32(1.0 / o.fps);
     let start = Instant::now();
+    let since = boot_secs(); // lock_after counts time asleep too
+    let mut dismissed = false; // by a key or the mouse, in --screensaver
     let mut last = Instant::now();
     let mut next_frame = Instant::now();
     let mut input = Vec::new();
@@ -281,6 +300,7 @@ fn main() {
                     if t <= grace {
                         input.clear(); // swallow the launch keypress
                     } else if ringing || term::wakes(&input) {
+                        dismissed = true;
                         break 'main;
                     }
                     input.retain(|&b| term::is_media(b)); // drop F-key sequences
@@ -510,6 +530,10 @@ fn main() {
     }
     ringer.stop();
     cap.stop();
+    // past lock_after the lock screen comes up under the last frame first
+    if dismissed && o.cfg.locks(o.now, boot_secs() - since) {
+        launch::lock_session(&o.cfg, &watcher.locked);
+    }
     term.restore();
     // a fade cut short by the exit still pauses and restores the volume
     if let Some(f) = fade {

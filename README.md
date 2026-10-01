@@ -26,6 +26,7 @@ mouse and it's gone.
 
 3. Run `glyphwave setup`. It asks when the screensaver should start, what
    happens after it has run for a while (lock, screen off, sleep, or nothing),
+   whether coming back after a while should take you to the lock screen,
    whether it runs on battery, and which banner to use. Then it hooks itself
    into your desktop's own idle timer (KDE, GNOME, Hyprland, sway or X11). It
    lists every file it will change before it writes anything, and
@@ -35,6 +36,13 @@ mouse and it's gone.
 
 Videos and some players hold off the idle timer, so for music you can start
 it yourself with Meta+Ctrl+L (next to Meta+L for lock) or from the app menu.
+
+Coming back to a locked screen: with `lock_after = 10` in the config, waking
+the screensaver within its first 10 minutes takes you back to the desktop,
+and after that to the lock screen. The screensaver keeps running until you
+touch a key either way. `0` always locks, `none` (the default) never does. A
+screensaver you started with Meta+Ctrl+L locks when woken whenever
+`lock_after` is set, since you started it to walk away.
 
 ## What it does
 

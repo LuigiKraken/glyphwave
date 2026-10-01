@@ -59,7 +59,7 @@ pub fn stop(first_arg: &str) {
     }
 }
 
-fn locked() -> bool {
+pub fn locked() -> bool {
     std::fs::read_dir("/proc").into_iter().flatten().flatten().any(|e| {
         std::fs::read_to_string(e.path().join("comm")).is_ok_and(|c| LOCKERS.contains(&c.trim()))
     })
@@ -81,8 +81,8 @@ fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-fn command(term: &str, cfg: &Config, bin: &str) -> Option<Vec<String>> {
-    let run = [bin, "--screensaver"];
+fn command(term: &str, cfg: &Config, bin: &str, now: bool) -> Option<Vec<String>> {
+    let run: &[&str] = if now { &[bin, "--screensaver", "--now"] } else { &[bin, "--screensaver"] };
     let v = |a: &[&str]| a.iter().map(|s| s.to_string()).chain(run.iter().map(|s| s.to_string())).collect();
     Some(match term {
         "kitty" => v(&["kitty", "--class", "glyphwave", "--start-as=fullscreen", "-o", "background=#000000"]),
@@ -99,18 +99,20 @@ fn command(term: &str, cfg: &Config, bin: &str) -> Option<Vec<String>> {
                 c.extend(["--profile".to_string(), p.clone()]);
             }
             let rest = ["--fullscreen", "--hide-menubar", "--hide-tabbar", "--notransparency", "-e"];
-            c.extend(rest.iter().chain(&run).map(|s| s.to_string()));
+            c.extend(rest.iter().chain(run).map(|s| s.to_string()));
             c
         }
         // standalone, so the process lives as long as the window and holds the lock
-        "ptyxis" => vec!["ptyxis".into(), "-s".into(), "--fullscreen".into(), "-x".into(), format!("{} --screensaver", quote(bin))],
+        "ptyxis" => vec!["ptyxis".into(), "-s".into(), "--fullscreen".into(), "-x".into(), format!("{} --screensaver{}", quote(bin), if now { " --now" } else { "" })],
         "gnome-terminal" => v(&["gnome-terminal", "--wait", "--full-screen", "--hide-menubar", "--"]),
         "xterm" => v(&["xterm", "-class", "glyphwave", "-fullscreen", "-bg", "black", "-e"]),
         _ => return None,
     })
 }
 
-/// `glyphwave launch [--stop] [--on-ac | --on-battery]`
+/// `glyphwave launch [--stop] [--now] [--on-ac | --on-battery]`; --now is
+/// the start-now key and menu entry, after which waking it locks at once
+/// when lock_after is set.
 pub fn launch(args: &[String]) -> i32 {
     let has = |a: &str| args.iter().any(|x| x == a);
     if has("--stop") {
@@ -130,7 +132,7 @@ pub fn launch(args: &[String]) -> i32 {
         eprintln!("glyphwave: no terminal found; set one under [terminal] in {}", config::path().display());
         return 1;
     };
-    let Some(cmd) = command(&term, &cfg, &bin) else {
+    let Some(cmd) = command(&term, &cfg, &bin, has("--now")) else {
         eprintln!("glyphwave: unknown terminal {term:?}; known: {}", TERMINALS.join(" "));
         return 1;
     };
@@ -148,6 +150,32 @@ pub fn launch(args: &[String]) -> i32 {
     let err = Command::new(&cmd[0]).args(&cmd[1..]).exec();
     eprintln!("glyphwave: can't run {}: {err}", cmd[0]);
     1
+}
+
+/// Lock the session for a screensaver dismissed past lock_after, and wait
+/// (up to 2 s) until the lock screen is up, so the window closes onto it
+/// rather than onto the desktop. KDE and GNOME lock through logind, which
+/// they answer on the bus (`bus_locked`); Hyprland, sway and X11 run the
+/// config's locker, which shows up as a process.
+pub fn lock_session(cfg: &Config, bus_locked: &std::sync::atomic::AtomicBool) {
+    use crate::setup::Desktop;
+    let cmd = match crate::setup::detect() {
+        Some(Desktop::Hyprland) => &cfg.hyprland_locker,
+        Some(Desktop::Sway) => &cfg.sway_locker,
+        Some(Desktop::X11) => &cfg.x11_locker,
+        _ => "loginctl lock-session",
+    };
+    let null = std::process::Stdio::null;
+    let mut c = Command::new("sh");
+    c.args(["-c", cmd]).stdin(null()).stdout(null()).stderr(null());
+    // its own session, so the locker outlives the terminal closing
+    unsafe { c.pre_exec(|| { libc::setsid(); Ok(()) }) };
+    let Ok(mut ch) = c.spawn() else { return };
+    std::thread::spawn(move || ch.wait()); // reap a locker that forks
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::time::Instant::now() < until && !bus_locked.load(std::sync::atomic::Ordering::Relaxed) && !locked() {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }
 
 /// `glyphwave idle-watch`, started from ~/.config/autostart on GNOME.
