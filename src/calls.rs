@@ -57,7 +57,10 @@ const APPS: [(&str, &str); 9] = [
     ("skype", "Skype"),
 ];
 
-/// Phrases that mark a notification from a call app as a ring.
+/// Phrases that mark a notification from a call app as a ring, in its
+/// summary; the `incoming …` ones count in the body too (Discord puts the
+/// caller in the summary). A chat message can say "calling you" as well,
+/// and that goes in the body.
 const RINGS: [&str; 8] = [
     "incoming call",
     "incoming video",
@@ -114,7 +117,7 @@ fn cut_around(s: &str) -> String {
 /// desktop-entry hint.
 pub fn detect(app: &str, entry: &str, category: &str, summary: &str, body: &str) -> Option<(String, String)> {
     let (summary, body) = (plain(summary), plain(body));
-    let text = format!("{summary}\n{body}").to_lowercase();
+    let (s, b) = (summary.to_lowercase(), body.to_lowercase());
     let cat = category.to_lowercase();
     let ids = format!("{app} {entry}").to_lowercase();
     let known = APPS.iter().find(|(k, _)| ids.contains(k)).map(|&(_, n)| n);
@@ -122,7 +125,8 @@ pub fn detect(app: &str, entry: &str, category: &str, summary: &str, body: &str)
         // call.ended, call.unanswered, call.ongoing: not ringing (any more)
         cat == "call" || cat == "call.incoming"
     } else {
-        known.is_some() && !text.contains("missed") && RINGS.iter().any(|p| text.contains(p))
+        let missed = s.contains("missed") || b.contains("missed");
+        known.is_some() && !missed && RINGS.iter().any(|p| s.contains(p) || (p.starts_with("incoming") && b.contains(p)))
     };
     if !rings {
         return None;
@@ -296,6 +300,8 @@ mod tests {
     #[test]
     fn does_not_ring() {
         assert_eq!(d("Slack", "", "Sam Rivera", "can you call me later?"), None);
+        assert_eq!(d("Slack", "", "Sam Rivera", "I'm calling you in five, is Ana calling too?"), None);
+        assert_eq!(d("Teams", "", "Morgan Lee", "Incoming call"), Some(("Teams".into(), "Morgan Lee".into())));
         assert_eq!(d("Slack", "", "Missed call", "Sam Rivera is calling you"), None);
         assert_eq!(d("Thunderbird", "", "Incoming call", "from a newsletter"), None);
         assert_eq!(d("Phone", "call.ended", "Ana", "Call ended"), None);
