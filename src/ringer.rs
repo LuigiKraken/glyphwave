@@ -9,6 +9,7 @@
 use std::io::Write;
 use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -66,13 +67,14 @@ fn streams(key: &str, corked_too: bool) -> Vec<(String, Vec<u32>)> {
         .collect()
 }
 
-/// The sink (its index) that `player`'s playing stream goes to.
+/// The sink (its index) that `player`'s stream goes to.
 pub fn sink_of(player: &str) -> Option<String> {
     let key = app(player);
     if key.is_empty() {
         return None;
     }
-    list(&key).into_iter().find(|s| s.ours && !s.corked && !s.sink.is_empty()).map(|s| s.sink)
+    // a playing stream first, else a paused one, so a resume finds it already
+    list(&key).into_iter().filter(|s| s.ours && !s.sink.is_empty()).min_by_key(|s| s.corked).map(|s| s.sink)
 }
 
 fn set_volume(id: &str, vol: &[u32], k: f32) {
@@ -121,7 +123,12 @@ fn app(player: &str) -> String {
 }
 
 /// Step the streams' volume through `level(0..1]` over `len`.
+/// Set while a fade runs: its volume steps are stream events the sink
+/// watcher can skip.
+pub static FADING: AtomicBool = AtomicBool::new(false);
+
 fn ramp(found: &[(String, Vec<u32>)], len: Duration, level: impl Fn(f32) -> f32) {
+    FADING.store(true, Ordering::Relaxed);
     let start = Instant::now();
     for i in 1..=STEPS {
         for (id, vol) in found {
@@ -132,6 +139,7 @@ fn ramp(found: &[(String, Vec<u32>)], len: Duration, level: impl Fn(f32) -> f32)
             std::thread::sleep(w);
         }
     }
+    FADING.store(false, Ordering::Relaxed);
 }
 
 /// The built-in tone's notes (start in s, Hz) and the length of one round;

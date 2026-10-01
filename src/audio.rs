@@ -318,8 +318,10 @@ pub fn watch_sink() -> Arc<Sink> {
         let mut dirty = false;
         while rd.read_line(&mut line).is_ok_and(|n| n > 0) {
             // "Event 'change' on sink #56"; sink-input events are streams
-            // starting, stopping or moving (the source-output ones are ours)
-            dirty |= line.contains(" on sink #") || line.contains(" on sink-input #") || line.contains(" on server");
+            // starting, stopping or moving (the source-output ones are ours),
+            // or a fade's volume steps, skipped
+            let input = line.contains(" on sink-input #") && !crate::ringer::FADING.load(Ordering::Relaxed);
+            dirty |= input || line.contains(" on sink #") || line.contains(" on server");
             line.clear();
             if dirty && rd.buffer().is_empty() {
                 dirty = false;

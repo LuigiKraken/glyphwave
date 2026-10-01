@@ -44,7 +44,8 @@ USAGE: glyphwave [options]
                     woken after lock_after minutes, it locks the screen first
   --now             with --screensaver: started by hand, as a visualizer, so
                     waking it never locks, and the desktop doesn't dim, lock
-                    or sleep while it runs (launch --now passes it on)
+                    or sleep while it runs (not with xidlehook on X11;
+                    launch --now passes it on)
   --demo            play a built-in synthetic track instead of the sound card
   --test            try things out in this terminal: --demo and --debug,
                     plus the TEST KEYS below

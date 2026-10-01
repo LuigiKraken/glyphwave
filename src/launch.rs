@@ -221,7 +221,8 @@ pub fn keep_awake() -> Awake {
     }
     const WHY: &str = "music visualizer started by hand";
     let held = || {
-        let conn = zbus::blocking::Connection::session().ok()?;
+        // a hung service mustn't hold up the first frame
+        let conn = zbus::blocking::connection::Builder::session().ok()?.method_timeout(std::time::Duration::from_millis(500)).build().ok()?;
         let call = |i: &'static Inhibitor| {
             let (n, p, _) = *i;
             let r = if n == INHIBITORS[0].0 {

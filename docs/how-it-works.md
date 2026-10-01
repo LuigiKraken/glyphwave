@@ -219,12 +219,14 @@ entry (`glyphwave launch --now`, which passes `--now` on), it's a music
 visualizer: waking it never locks, whatever `lock_after` says, and while it
 runs it holds off the desktop's own timers with
 `org.freedesktop.ScreenSaver.Inhibit` on the session bus, or, where nothing
-answers that (GNOME), `org.gnome.SessionManager.Inhibit` for idle and suspend. The
+answers that, `org.gnome.SessionManager.Inhibit` for idle and suspend. The
 inhibit is let go when it exits, and by the bus if it crashes. On KDE that
 stops the lock timer and PowerDevil's dimming, screen-off and sleep; hypridle
 honours it unless `ignore_dbus_inhibit = true`. swayidle doesn't listen to the
 bus, so on sway glyphwave asks sway to make its window an idle inhibitor
-(`inhibit_idle open`), gone with the window. xidlehook on X11 has neither, so
+(`inhibit_idle open`), gone with the window. That finds the window by its
+`glyphwave` app id, which kitty, foot, Alacritty, WezTerm and xterm get, so on
+sway use one of those. xidlehook on X11 has neither, so
 its timers still fire during a run started by hand. It keeps the screen on
 until you stop it, which costs battery. Started by the idle timer it holds
 nothing off, so the timers after it work as before. Tested on KDE; GNOME and
