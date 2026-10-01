@@ -107,9 +107,11 @@ means the text and the music share one screen, one palette and one clock.
   the output's mute and volume itself.)
 - **Calls.** When someone calls on Slack, Discord, Teams, WhatsApp and similar
   apps, the screen fades to a small icon for the app and a card saying who's
-  calling, read from the desktop's call notification. You answer in the app
-  itself: while a call rings, every key (the music keys too) and the mouse
-  end the screensaver.
+  calling, read from the desktop's call notification. The music fades out in
+  half a second and pauses, and a soft chime rings until the call stops
+  (`ringtone = none` or a sound file of your own in the config). You answer
+  in the app itself: while a call rings, every key (the music keys too) and
+  the mouse end the screensaver. The music stays paused afterwards.
 - **The banner** is your system's logo (whatever fastfetch or neofetch
   shows, in glyphwave's colours), your machine's name in big block letters,
   or your own art in `~/.config/glyphwave/banner.txt`. It uses your own art
