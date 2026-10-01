@@ -67,7 +67,7 @@ KEYS (interactive): q quit · space play/pause · n next · p previous ·
 MUSIC KEYS (also in --screensaver, without waking it): - previous ·
   + next · Enter play/pause
 TEST KEYS (--test): 1–0 the themes in the order above · d t s w fake a
-  Discord / Teams / Slack / WhatsApp call, ringing 5 s (a real player
+  Discord / Teams / Slack / WhatsApp call, ringing 5 s or until c (a real player
   that's playing fades out and back in) · m mute the demo · space pause the demo · [ ] calmer /
   louder demo · o debug (in place of d) · l also shows sample art when
   there's no banner.txt
@@ -75,8 +75,9 @@ TEST KEYS (--test): 1–0 the themes in the order above · d t s w fake a
 A muted sink, or one at 0 %, counts as paused. While a call rings (read from
 the desktop's call notification) the banner makes way for the app's icon and
 the caller, the music fades out and pauses, and a ringtone plays. Any key or
-the mouse ends glyphwave, the music keys too, and the music stays paused; a
-ring that stops on its own fades the music back in.
+the mouse ends glyphwave, the music keys too, and the music stays paused; c
+ignores the call, and that or a ring that stops on its own fades the music
+back in.
 ";
 
 struct Opts {
@@ -268,6 +269,12 @@ fn main() {
                 // while a call rings every key ends glyphwave, music keys too
                 calls.sync(&mut call_seen, &mut call);
                 let ringing = call.as_ref().is_some_and(|c| c.ringing(Instant::now()));
+                // c ignores it: the ring stops, the music comes back, glyphwave stays
+                if ringing && input.contains(&b'c') && !(o.screensaver && t <= grace) {
+                    calls.ignore();
+                    input.clear();
+                    continue;
+                }
                 if o.screensaver {
                     if t <= grace {
                         input.clear(); // swallow the launch keypress

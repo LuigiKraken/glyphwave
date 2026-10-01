@@ -111,9 +111,10 @@ means the text and the music share one screen, one palette and one clock.
   half a second and pauses, and a soft chime rings until the call stops
   (`ringtone = none` or a sound file of your own in the config). You answer
   in the app itself: while a call rings, every key (the music keys too) and
-  the mouse end the screensaver, and the music stays paused. A call that
-  stops ringing on its own (missed, or declined elsewhere) brings the music
-  back, fading in, like a phone.
+  the mouse end the screensaver, and the music stays paused. `c` ignores
+  the call: the ring stops, the screensaver stays, and the music fades back
+  in, as it does when a call stops ringing on its own (missed, or declined
+  elsewhere), like a phone.
 - **The banner** is your system's logo (whatever fastfetch or neofetch
   shows, in glyphwave's colours), your machine's name in big block letters,
   or your own art in `~/.config/glyphwave/banner.txt`. It uses your own art
@@ -122,7 +123,7 @@ means the text and the music share one screen, one palette and one clock.
   down to the name.
 - **A test mode.** `glyphwave --test` runs the demo track in the current
   terminal with the debug line. `1`–`0` jump to a theme (through the normal
-  fade), `d`/`t`/`s`/`w` fake a Discord, Teams, Slack or WhatsApp call, `m`
+  fade), `d`/`t`/`s`/`w` fake a 5 s Discord, Teams, Slack or WhatsApp call, `m`
   fakes mute, space fakes pause, and `[`/`]` make the track calmer or louder.
 
 ## The stack

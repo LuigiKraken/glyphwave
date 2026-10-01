@@ -260,6 +260,11 @@ impl Calls {
         }
     }
 
+    /// Ignore the ringing call (`c`): it stops here, the app still rings.
+    pub fn ignore(&self) {
+        end_if(&self.ring, |_| true);
+    }
+
     /// `--test`: ring as if `app` had sent this notification, for 5 s, then
     /// stop as a missed call does.
     pub fn fake(&self, app: &str, summary: &str, body: &str) {
