@@ -321,8 +321,13 @@ through four themes:
   changes (Foote 2000), and the audio/video sync limits of ITU-R BT.1359.
 - **[OKLab](https://bottosson.github.io/posts/oklab/)** (Ottosson 2020) for
   colour mixing.
+- **[toilet](http://caca.zoy.org/wiki/toilet)** (Sam Hocevar, WTFPL): the
+  big letters of the `name` banner are its bigmono12 font, a rendering of
+  Monospace Bold 12.
 
 cava, terminaltexteffects and ttfx are MIT licensed; see `NOTICE`. The
-algorithms were re-implemented here, and no source code was copied.
-`docs/cava-tte-algorithms.md` holds the constants and effect designs taken
-from their sources.
+algorithms were re-implemented here in glyphwave's own code; what the text
+effects take as-is from terminaltexteffects are its default palettes, glyph
+sequences, katakana list and timing constants. `docs/cava-tte-algorithms.md`
+describes their sources, cava's spectrum code in pseudocode close to the
+original.

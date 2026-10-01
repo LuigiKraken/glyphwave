@@ -1,6 +1,9 @@
-glyphwave re-implements algorithms and effect designs from the following
-MIT-licensed projects. No source code was copied, but the notices are kept here
-in acknowledgement.
+glyphwave re-implements, in its own code, algorithms and effect designs from
+the following MIT-licensed projects. No source code was translated or
+copied; the text effects do reuse terminaltexteffects' default colour
+palettes, glyph sequences, katakana symbol list and per-effect timing
+constants, and docs/cava-tte-algorithms.md describes cava's spectrum code
+in pseudocode derived from its source. Their notices are kept here.
 
 cava — https://github.com/karlstav/cava
   Copyright (c) 2015 Karl Stavestrand
