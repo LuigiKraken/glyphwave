@@ -133,8 +133,10 @@ hooks in, and the research it builds on.
   256-colour fallback for terminals without it. Colours are mixed in OKLab
   so gradients stay even.
 - **Audio** comes from `parec` (or `pw-record` where `parec` isn't
-  installed) recording the default output's monitor, so it sees whatever the
-  machine plays. That works on PipeWire and PulseAudio alike.
+  installed) recording the monitor of the output the player's stream plays
+  to, else the default output's. It switches when the stream moves, as it
+  does when headphones or HDMI come and go. That works on PipeWire and
+  PulseAudio alike.
 - **Now playing** comes from MPRIS on the session bus, which Spotify,
   browsers and most Linux players speak. Nothing is polled: the bus signals
   when something changes.
@@ -223,7 +225,7 @@ See [contrib/gnome](../contrib/gnome/README.md) for Fedora.
 
 | File | What |
 |---|---|
-| `audio.rs` | `parec` (or `pw-record`) from the default output's monitor, float32 stereo at 48 kHz, into a ring buffer; the output's mute and volume; plus the synthetic demo track |
+| `audio.rs` | `parec` (or `pw-record`) from the player's output's monitor (else the default's), float32 stereo at 48 kHz, into a ring buffer; that output's mute and volume; plus the synthetic demo track |
 | `dsp.rs` | spectrum, onsets, tempo, beat phase, loudness, drop and section detection |
 | `mpris.rs` | now playing (zbus), plus the KDE/GNOME locker check in screensaver mode; re-read only on bus signals |
 | `canvas.rs` | cell buffer with half-block pixels and braille dots; the diffed output |

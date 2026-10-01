@@ -228,7 +228,7 @@ fn main() {
     // the player a ring paused, to play again if the ring ends on its own
     let mut paused_for_call: Option<String> = None;
     // the demo isn't on the sink; --test fakes a mute with m instead
-    let hushed = if o.demo { Arc::new(AtomicBool::new(false)) } else { audio::watch_sink() };
+    let sink = if o.demo { Arc::new(audio::Sink::default()) } else { audio::watch_sink() };
     let (mut fake_pause, mut fake_mute) = (false, false);
     let mut an = dsp::Analyzer::new();
     let mut spec = fx::spectrum::Spectrum::new();
@@ -381,13 +381,17 @@ fn main() {
         // a muted sink, or one at 0 %, counts as paused. While a call rings
         // it listens too: the music has paused, so what plays is the ring,
         // and the call view pulses on it
-        let hush = fake_mute || hushed.load(Ordering::Relaxed);
+        if !o.demo {
+            sink.follow(&track.player);
+        }
+        let hush = fake_mute || sink.hushed.load(Ordering::Relaxed);
         let playing = !hush && ((o.demo && !fake_pause) || track.playing());
         not_playing = if playing { 0.0 } else { not_playing + dt };
         let listen = was_ringing && !o.demo;
         if !o.demo {
             if (playing && !idle_forced) || listen {
-                cap.start();
+                let name = sink.name().clone();
+                cap.start(&name);
             } else if (not_playing > 10.0 || idle_forced) && cap.running() {
                 cap.stop();
             }

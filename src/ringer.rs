@@ -17,11 +17,18 @@ const FADE_IN: Duration = Duration::from_millis(1500);
 const STEPS: u32 = 12;
 const RATE: u32 = crate::audio::RATE;
 
-/// The player's sink inputs (id, raw volume per channel), matched by the bus
+/// One of `pactl list sink-inputs`, and whether it is `key`'s: the bus
 /// name's app part (`org.mpris.MediaPlayer2.brave.instance42` → brave)
-/// against the stream's application name, binary or node name. Corked
-/// (paused) ones only with `corked`.
-fn streams(key: &str, corked_too: bool) -> Vec<(String, Vec<u32>)> {
+/// against the stream's application name, binary or node name.
+struct Stream {
+    id: String,
+    sink: String,
+    vol: Vec<u32>,
+    corked: bool,
+    ours: bool,
+}
+
+fn list(key: &str) -> Vec<Stream> {
     let Ok(out) = Command::new("pactl").args(["list", "sink-inputs"]).env("LC_ALL", "C").stderr(Stdio::null()).output() else {
         return Vec::new();
     };
@@ -29,23 +36,43 @@ fn streams(key: &str, corked_too: bool) -> Vec<(String, Vec<u32>)> {
     let mut found = Vec::new();
     for block in text.split("Sink Input #").skip(1) {
         let id = block.lines().next().unwrap_or("").trim().to_string();
-        let (mut vol, mut corked, mut ours) = (Vec::new(), false, false);
+        let mut s = Stream { id, sink: String::new(), vol: Vec::new(), corked: false, ours: false };
         for l in block.lines().map(str::trim) {
             if let Some(v) = l.strip_prefix("Volume:") {
                 // "aux0: 65536 / 100% / 0.00 dB,   aux1: 65536 / …"
-                vol = v.split(',').filter_map(|c| c.split_once(':')?.1.split_whitespace().next()?.parse().ok()).collect();
+                s.vol = v.split(',').filter_map(|c| c.split_once(':')?.1.split_whitespace().next()?.parse().ok()).collect();
             }
-            corked |= l == "Corked: yes";
+            if let Some(v) = l.strip_prefix("Sink:") {
+                s.sink = v.trim().to_string();
+            }
+            s.corked |= l == "Corked: yes";
             if let Some((k, v)) = l.split_once(" = ") {
                 let named = matches!(k, "application.name" | "application.process.binary" | "node.name");
-                ours |= named && v.trim_matches('"').to_lowercase().contains(key);
+                s.ours |= named && v.trim_matches('"').to_lowercase().contains(key);
             }
         }
-        if ours && (corked_too || !corked) && !vol.is_empty() {
-            found.push((id, vol));
-        }
+        found.push(s);
     }
     found
+}
+
+/// The player's sink inputs (id, raw volume per channel). Corked (paused)
+/// ones only with `corked_too`.
+fn streams(key: &str, corked_too: bool) -> Vec<(String, Vec<u32>)> {
+    list(key)
+        .into_iter()
+        .filter(|s| s.ours && (corked_too || !s.corked) && !s.vol.is_empty())
+        .map(|s| (s.id, s.vol))
+        .collect()
+}
+
+/// The sink (its index) that `player`'s playing stream goes to.
+pub fn sink_of(player: &str) -> Option<String> {
+    let key = app(player);
+    if key.is_empty() {
+        return None;
+    }
+    list(&key).into_iter().find(|s| s.ours && !s.corked && !s.sink.is_empty()).map(|s| s.sink)
 }
 
 fn set_volume(id: &str, vol: &[u32], k: f32) {
