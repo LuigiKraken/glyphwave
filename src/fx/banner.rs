@@ -500,7 +500,7 @@ impl Banner {
                 self.sweep = 0.0;
             }
         }
-        let shift = self.effect.row_shift.clone();
+        let shift = &self.effect.row_shift;
         let sweep = self.sweep;
         let (bw, bh) = (self.bw as f32, self.bh as f32);
         for (i, c) in self.chars.iter_mut().enumerate() {

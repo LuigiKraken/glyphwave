@@ -199,6 +199,9 @@ pub struct Analyzer {
     cap_hold: Vec<f32>,
     cap_vel: Vec<f32>,
     raw_h: Vec<f32>,
+    /// Per-frame scratch: bar levels in dB per channel, mean band power.
+    levels: [Vec<f32>; 2],
+    powers: Vec<f32>,
     // odf
     odf_bands: Vec<(usize, usize, f32)>,
     prev_log: Vec<f32>,
@@ -285,6 +288,8 @@ impl Analyzer {
             cap_hold: Vec::new(),
             cap_vel: Vec::new(),
             raw_h: Vec::new(),
+            levels: [Vec::new(), Vec::new()],
+            powers: Vec::new(),
             odf_bands,
             prev_log: vec![0.0; nb],
             cur_log: vec![0.0; nb],
@@ -352,7 +357,9 @@ impl Analyzer {
         for c in 0..2 {
             self.peak[c] = vec![0.0; n];
             self.fall_t[c] = vec![0.0; n];
+            self.levels[c] = vec![0.0; n];
         }
+        self.powers = vec![0.0; n];
         self.f.left = vec![0.0; n];
         self.f.right = vec![0.0; n];
         self.f.mono = vec![0.0; n];
@@ -438,8 +445,8 @@ impl Analyzer {
 
         // display spectrum, both channels
         let mut max_l = -120.0f32;
-        let mut levels = [vec![0.0f32; self.nbars], vec![0.0f32; self.nbars]];
-        let mut powers = vec![0.0f32; self.nbars];
+        let mut powers = std::mem::take(&mut self.powers);
+        powers.fill(0.0);
         for ch in 0..2 {
             for k in 0..3 {
                 let src = if ch == 0 { &self.buf_l[..need] } else { &self.buf_r[..need] };
@@ -449,10 +456,11 @@ impl Analyzer {
                 let p = self.band_power(b);
                 powers[i] += 0.5 * p;
                 let l = 10.0 * (p + 1e-12).log10() + TILT * (b.fc / 1000.0).log2();
-                levels[ch][i] = l;
+                self.levels[ch][i] = l;
                 max_l = max_l.max(l);
             }
         }
+        let levels = &self.levels;
         if self.gate_open {
             self.started += dt;
             let tau = if max_l > self.lref {
@@ -505,6 +513,7 @@ impl Analyzer {
         }
 
         self.spectral_features(&powers, dt);
+        self.powers = powers;
 
         let f = &mut self.f;
         f.wave_l.resize(WAVE, 0.0);
