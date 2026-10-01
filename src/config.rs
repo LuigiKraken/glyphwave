@@ -1,0 +1,328 @@
+//! ~/.config/glyphwave/config: plain `key = value` lines, `[section]`
+//! headers, `#` comments. `glyphwave setup` writes it; glyphwave reads the
+//! banner and fps from it, the launcher the terminal and battery choice.
+
+use std::path::PathBuf;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Then {
+    Lock,
+    ScreenOff,
+    Sleep,
+    Nothing,
+}
+
+impl Then {
+    pub fn parse(s: &str) -> Option<Then> {
+        Some(match s {
+            "lock" => Then::Lock,
+            "screen-off" => Then::ScreenOff,
+            "sleep" => Then::Sleep,
+            "none" => Then::Nothing,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Then::Lock => "lock",
+            Then::ScreenOff => "screen-off",
+            Then::Sleep => "sleep",
+            Then::Nothing => "none",
+        }
+    }
+}
+
+/// Minutes: start the screensaver after `start` idle, then act `after` later.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Times {
+    pub start: u32,
+    pub then: Then,
+    pub after: u32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Config {
+    pub ac: Times,
+    pub on_battery: bool,
+    /// [battery] overrides; None = same times as plugged in
+    pub battery: Option<Times>,
+    pub banner: Option<String>,
+    pub fps: Option<f32>,
+    pub terminal: Option<String>,
+    pub konsole_profile: Option<String>,
+    pub kde_black_profile: bool,
+    pub hyprland_locker: String,
+    pub sway_locker: String,
+    pub x11_locker: String,
+}
+
+impl Default for Config {
+    fn default() -> Config {
+        Config {
+            ac: Times { start: 5, then: Then::Lock, after: 10 },
+            on_battery: true,
+            battery: None,
+            banner: None,
+            fps: None,
+            terminal: None,
+            konsole_profile: None,
+            kde_black_profile: true,
+            hyprland_locker: "hyprlock".into(),
+            sway_locker: "swaylock -f".into(),
+            x11_locker: "i3lock -c 000000".into(),
+        }
+    }
+}
+
+pub fn dir() -> PathBuf {
+    match std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+        Some(d) => PathBuf::from(d),
+        None => PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config"),
+    }
+}
+
+pub fn path() -> PathBuf {
+    dir().join("glyphwave/config")
+}
+
+/// The file if there is one; a broken line is reported and skipped.
+pub fn load() -> Option<Config> {
+    let p = path();
+    let text = std::fs::read_to_string(&p).ok()?;
+    let (cfg, errs) = parse(&text);
+    for e in errs {
+        eprintln!("glyphwave: {}: {e}", p.display());
+    }
+    Some(cfg)
+}
+
+fn minutes(v: &str) -> Result<u32, String> {
+    match v.parse::<u32>() {
+        Ok(n) if n > 0 => Ok(n),
+        _ => Err(format!("{v:?} isn't a number of minutes")),
+    }
+}
+
+fn set(slot: &mut Option<String>, v: String) -> Result<(), String> {
+    *slot = Some(v).filter(|v| !v.is_empty());
+    Ok(())
+}
+
+fn set_str(slot: &mut String, v: String) -> Result<(), String> {
+    *slot = v;
+    Ok(())
+}
+
+fn yes_no(v: &str) -> Result<bool, String> {
+    match v {
+        "yes" | "true" | "on" => Ok(true),
+        "no" | "false" | "off" => Ok(false),
+        _ => Err(format!("{v:?} should be yes or no")),
+    }
+}
+
+/// Parse the file; unknown keys and bad values come back as messages and
+/// leave the default in place.
+pub fn parse(text: &str) -> (Config, Vec<String>) {
+    let mut c = Config::default();
+    let (mut in_bat, mut bs, mut bt, mut ba) = (false, None, None, None);
+    let mut errs = Vec::new();
+    let mut section = String::new();
+    for (n, raw) in text.lines().enumerate() {
+        let line = match raw.find(" #").or(raw.find("\t#")) {
+            Some(i) => &raw[..i],
+            None => raw,
+        }
+        .trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(s) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            section = s.trim().to_string();
+            in_bat |= section == "battery";
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else {
+            errs.push(format!("line {}: expected key = value", n + 1));
+            continue;
+        };
+        let (k, v) = (k.trim(), v.trim().to_string());
+        let then = |v: &str| Then::parse(v).ok_or(format!("then is lock, screen-off, sleep or none, not {v:?}"));
+        let r: Result<(), String> = match (section.as_str(), k) {
+            ("", "start_after") => minutes(&v).map(|m| c.ac.start = m),
+            ("", "then") => then(&v).map(|t| c.ac.then = t),
+            ("", "then_after") => minutes(&v).map(|m| c.ac.after = m),
+            ("", "on_battery") => yes_no(&v).map(|y| c.on_battery = y),
+            ("", "banner") => set(&mut c.banner, v),
+            ("", "fps") => v.parse::<f32>().map(|f| c.fps = Some(f)).map_err(|_| format!("fps {v:?} isn't a number")),
+            ("battery", "start_after") => minutes(&v).map(|m| bs = Some(m)),
+            ("battery", "then") => then(&v).map(|t| bt = Some(t)),
+            ("battery", "then_after") => minutes(&v).map(|m| ba = Some(m)),
+            ("terminal", "terminal") => set(&mut c.terminal, v),
+            ("terminal", "konsole_profile") => set(&mut c.konsole_profile, v),
+            ("kde", "black_profile") => yes_no(&v).map(|y| c.kde_black_profile = y),
+            ("hyprland", "locker") => set_str(&mut c.hyprland_locker, v),
+            ("sway", "locker") => set_str(&mut c.sway_locker, v),
+            ("x11", "locker") => set_str(&mut c.x11_locker, v),
+            (s, k) => Err(format!("unknown key {k}{}", if s.is_empty() { String::new() } else { format!(" in [{s}]") })),
+        };
+        if let Err(e) = r {
+            errs.push(format!("line {}: {e}", n + 1));
+        }
+    }
+    // [battery] keys not given fall back to the top-level values
+    if in_bat {
+        let b = Times { start: bs.unwrap_or(c.ac.start), then: bt.unwrap_or(c.ac.then), after: ba.unwrap_or(c.ac.after) };
+        c.battery = Some(b).filter(|b| *b != c.ac);
+    }
+    (c, errs)
+}
+
+impl Config {
+    /// The times that apply on battery.
+    pub fn bat(&self) -> Times {
+        self.battery.unwrap_or(self.ac)
+    }
+
+    /// The file setup writes: the general settings, then the optional
+    /// sections, commented out unless they hold something.
+    pub fn render(&self) -> String {
+        let mut s = String::from(
+            "# glyphwave — edit, then run `glyphwave setup` again to apply.\n\
+             # Times are minutes. The later step counts from the screensaver's start.\n\n",
+        );
+        s += &format!("start_after = {}\n", self.ac.start);
+        s += &format!("then = {}                # lock, screen-off, sleep or none\n", self.ac.then.name());
+        s += &format!("then_after = {}\n", self.ac.after);
+        s += &format!("on_battery = {}            # no: only when plugged in\n", if self.on_battery { "yes" } else { "no" });
+        match &self.banner {
+            Some(b) => s += &format!("banner = {b}\n"),
+            None => s += "# banner = logo         # logo, name, or a path to a text file\n",
+        }
+        s += &format!("fps = {}\n", self.fps.unwrap_or(30.0));
+
+        let opt = |on: bool| if on { "" } else { "# " };
+        s += "\n# Battery times, when they should differ from the ones above.\n";
+        let b = self.bat();
+        let on = self.battery.is_some();
+        s += &format!("{}[battery]\n", opt(on));
+        s += &format!("{}start_after = {}\n", opt(on), b.start);
+        s += &format!("{}then = {}\n", opt(on), b.then.name());
+        s += &format!("{}then_after = {}\n", opt(on), b.after);
+
+        s += "\n# Which terminal opens the screensaver; empty picks the first installed of\n\
+              # kitty foot alacritty ghostty wezterm konsole ptyxis gnome-terminal xterm.\n";
+        let on = self.terminal.is_some() || self.konsole_profile.is_some();
+        s += &format!("{}[terminal]\n", opt(on));
+        s += &format!("{}terminal = {}\n", opt(self.terminal.is_some()), self.terminal.as_deref().unwrap_or("konsole"));
+        s += &format!(
+            "{}konsole_profile = {}\n",
+            opt(self.konsole_profile.is_some()),
+            self.konsole_profile.as_deref().unwrap_or("Glyphwave")
+        );
+
+        s += "\n# KDE: setup writes a black, borderless Konsole profile named Glyphwave.\n";
+        let on = !self.kde_black_profile;
+        s += &format!("{}[kde]\n{}black_profile = {}\n", opt(on), opt(on), if self.kde_black_profile { "yes" } else { "no" });
+
+        s += "\n# GNOME has no settings here: setup adds an idle watcher to\n\
+              # ~/.config/autostart and moves GNOME's own blank / lock / suspend timers.\n";
+
+        for (name, val, def) in [
+            ("hyprland", &self.hyprland_locker, "hyprlock"),
+            ("sway", &self.sway_locker, "swaylock -f"),
+            ("x11", &self.x11_locker, "i3lock -c 000000"),
+        ] {
+            let on = val != def;
+            s += &format!("\n# {name}: the locker in the lines setup prints\n{}[{name}]\n{}locker = {val}\n", opt(on), opt(on));
+        }
+        s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_when_empty() {
+        let (c, e) = parse("");
+        assert!(e.is_empty());
+        assert_eq!(c, Config::default());
+    }
+
+    #[test]
+    fn top_level_and_comments() {
+        let (c, e) = parse(
+            "# hi\nstart_after = 7\nthen = sleep   # comment\nthen_after=3\non_battery = no\n\
+             banner = /home/me/my art.txt\nfps = 24\n",
+        );
+        assert!(e.is_empty(), "{e:?}");
+        assert_eq!(c.ac, Times { start: 7, then: Then::Sleep, after: 3 });
+        assert!(!c.on_battery);
+        assert_eq!(c.banner.as_deref(), Some("/home/me/my art.txt"));
+        assert_eq!(c.fps, Some(24.0));
+        assert_eq!(c.battery, None);
+    }
+
+    #[test]
+    fn battery_overrides_fall_back_to_top() {
+        let (c, e) = parse("start_after = 5\nthen = lock\nthen_after = 10\n[battery]\nstart_after = 2\n");
+        assert!(e.is_empty(), "{e:?}");
+        assert_eq!(c.bat(), Times { start: 2, then: Then::Lock, after: 10 });
+        // a [battery] section equal to the top is no override at all
+        let (c, _) = parse("start_after = 5\n[battery]\nstart_after = 5\n");
+        assert_eq!(c.battery, None);
+    }
+
+    #[test]
+    fn commented_sections_are_ignored() {
+        let (c, e) = parse("# [battery]\n# start_after = 1\n# [terminal]\n# terminal = xterm\n");
+        assert!(e.is_empty());
+        assert_eq!(c.battery, None);
+        assert_eq!(c.terminal, None);
+    }
+
+    #[test]
+    fn sections() {
+        let (c, e) = parse(
+            "[terminal]\nterminal = konsole\nkonsole_profile = Black\n[kde]\nblack_profile = no\n\
+             [sway]\nlocker = waylock\n",
+        );
+        assert!(e.is_empty(), "{e:?}");
+        assert_eq!(c.terminal.as_deref(), Some("konsole"));
+        assert_eq!(c.konsole_profile.as_deref(), Some("Black"));
+        assert!(!c.kde_black_profile);
+        assert_eq!(c.sway_locker, "waylock");
+    }
+
+    #[test]
+    fn errors_keep_defaults() {
+        let (c, e) = parse("start_after = soon\nthen = shutdown\nwhat = 1\nnonsense\n[gnome]\nx = 1\nfps = fast\n");
+        assert_eq!(e.len(), 6, "{e:?}");
+        assert!(e[0].starts_with("line 1"));
+        assert_eq!(c.ac, Config::default().ac);
+        assert_eq!(c.fps, None);
+    }
+
+    #[test]
+    fn render_round_trips() {
+        let c = Config {
+            ac: Times { start: 3, then: Then::ScreenOff, after: 4 },
+            on_battery: false,
+            battery: Some(Times { start: 1, then: Then::Sleep, after: 2 }),
+            banner: Some("name".into()),
+            fps: Some(20.0),
+            terminal: Some("konsole".into()),
+            konsole_profile: Some("Glyphwave".into()),
+            x11_locker: "slock".into(),
+            ..Config::default()
+        };
+        let (back, e) = parse(&c.render());
+        assert!(e.is_empty(), "{e:?}");
+        assert_eq!(back, c);
+        let d = Config { fps: Some(30.0), ..Config::default() };
+        assert_eq!(parse(&d.render()).0, d);
+    }
+}

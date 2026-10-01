@@ -5,10 +5,13 @@
 mod audio;
 mod canvas;
 mod color;
+mod config;
 mod dsp;
 mod fx;
+mod launch;
 mod mpris;
 mod scene;
+mod setup;
 mod term;
 
 use canvas::Canvas;
@@ -22,6 +25,14 @@ const HELP: &str = "\
 glyphwave — terminal screensaver + music visualizer
 
 USAGE: glyphwave [options]
+       glyphwave setup [--remove] [--dry-run] [--desktop NAME]
+       glyphwave launch [--stop]
+
+  setup             ask when to start and what comes after, then hook glyphwave
+                    into the desktop's idle timer (KDE, GNOME, Hyprland, sway,
+                    X11); lists every file first. --remove puts it all back
+  launch            open the screensaver fullscreen in a terminal, once; what
+                    the idle timer runs. --stop closes it (before a locker)
 
   --screensaver     exit on mouse motion, on any key but F1–F12 and the
                     music keys, or when the KDE/GNOME locker takes over
@@ -38,6 +49,9 @@ USAGE: glyphwave [options]
   --theme NAME      always use one music theme (levels pulse shock wave fire
                     matrix glitch springs bounce warp; floor, the bar floor
                     in place of the ribbon, runs only when asked for)
+
+banner and fps also come from ~/.config/glyphwave/config (setup writes it);
+options given here win.
 
 KEYS (interactive): q quit · space play/pause · n next · p previous ·
   v next theme/effect · i idle/music · d debug
@@ -62,12 +76,13 @@ struct Opts {
 
 fn opts() -> Opts {
     let home = std::env::var("HOME").unwrap_or_default();
+    let cfg = config::load().unwrap_or_default();
     let mut o = Opts {
         screensaver: false,
         demo: false,
         idle: false,
-        fps: 30.0,
-        banner: format!("{home}/.local/share/kde-screensaver/screensaver.txt"),
+        fps: cfg.fps.unwrap_or(30.0).clamp(5.0, 240.0),
+        banner: cfg.banner.unwrap_or(format!("{home}/.local/share/kde-screensaver/screensaver.txt")),
         frames: None,
         size: None,
         stats: false,
@@ -117,6 +132,13 @@ fn opts() -> Opts {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some("setup") => std::process::exit(setup::run(&args[1..])),
+        Some("launch") => std::process::exit(launch::launch(&args[1..])),
+        Some("idle-watch") => std::process::exit(launch::idle_watch()),
+        _ => {}
+    }
     let o = opts();
     std::panic::set_hook(Box::new(|info| {
         term::emergency_restore();
