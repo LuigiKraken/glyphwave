@@ -67,10 +67,10 @@ KEYS (interactive): q quit · space play/pause · n next · p previous ·
 MUSIC KEYS (also in --screensaver, without waking it): - previous ·
   + next · Enter play/pause
 TEST KEYS (--test): 1–0 the themes in the order above · d t s w fake a
-  Discord / Teams / Slack / WhatsApp call, ringing 5 s or until c (a real player
-  that's playing fades out and back in) · m mute the demo · space pause the demo · [ ] calmer /
-  louder demo · o debug (in place of d) · l also shows sample art when
-  there's no banner.txt
+  Discord / Teams / Slack / WhatsApp call, ringing 5 s or until c (a real
+  player that's playing fades out and back in) · m mute the demo · space
+  pause the demo · [ ] calmer / louder demo · o debug (in place of d) ·
+  l also shows sample art when there's no banner.txt
 
 A muted sink, or one at 0 %, counts as paused. While a call rings (read from
 the desktop's call notification) the banner makes way for the app's icon and

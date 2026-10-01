@@ -1,6 +1,6 @@
 # On a v* tag: build static musl binaries for x86_64 and aarch64 (each on its
 # own native runner, so the smoke test runs the real thing) and attach them,
-# their sha256 files and install.sh to a GitHub Release.
+# their sha256 files, install.sh and the licence files to a GitHub Release.
 
 name: release
 
@@ -28,6 +28,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build
         run: |
+          if ! command -v rustup >/dev/null; then
+            curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            PATH=$HOME/.cargo/bin:$PATH
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
           rustup toolchain install stable --profile minimal --target "$TARGET"
           cargo +stable build --release --locked --target "$TARGET"
       - name: Check it is static and runs
@@ -44,8 +49,22 @@ jobs:
           name: ${{ env.NAME }}
           path: dist/*
 
+  licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2,cargo-about@0.9.2
+      - name: Check licences, and that THIRD-PARTY-LICENSES is current
+        run: |
+          cargo fetch --locked
+          cargo deny --frozen check licenses
+          cargo about generate --frozen --fail about.hbs -o THIRD-PARTY-LICENSES
+          git diff --exit-code THIRD-PARTY-LICENSES
+
   release:
-    needs: build
+    needs: [build, licenses]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,4 +75,7 @@ jobs:
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* install.sh --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* install.sh \
+            LICENSE-MIT LICENSE-APACHE NOTICE THIRD-PARTY-LICENSES \
+            --title "$GITHUB_REF_NAME" --generate-notes

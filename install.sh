@@ -4,7 +4,7 @@
 #   curl -fsSL https://github.com/LuigiKraken/glyphwave/releases/latest/download/install.sh | sh
 #
 # GLYPHWAVE_BASE points it at another release, e.g.
-# https://github.com/LuigiKraken/glyphwave/releases/download/v0.1.0
+# https://github.com/LuigiKraken/glyphwave/releases/download/v0.9.0
 set -eu
 
 base=${GLYPHWAVE_BASE:-https://github.com/LuigiKraken/glyphwave/releases/latest/download}
@@ -19,11 +19,25 @@ esac
 name=glyphwave-$arch-linux
 dir=$HOME/.local/bin
 
+if command -v curl >/dev/null; then
+    get='curl -fsSL'
+elif command -v wget >/dev/null; then
+    get='wget -qO-'
+else
+    echo "glyphwave: needs curl or wget to download" >&2
+    exit 1
+fi
+# fetch URL: print it to stdout
+fetch() {
+    $get "$1" || { echo "glyphwave: couldn't download $1" >&2; return 1; }
+}
+
 mkdir -p "$dir"
 tmp=$(mktemp "$dir/.glyphwave.XXXXXX")
 trap 'rm -f "$tmp"' EXIT
-curl -fsSL "$base/$name" -o "$tmp"
-want=$(curl -fsSL "$base/$name.sha256" | cut -d' ' -f1)
+fetch "$base/$name" >"$tmp"
+sum=$(fetch "$base/$name.sha256")
+want=${sum%% *}
 if [ "$(sha256sum "$tmp" | cut -d' ' -f1)" != "$want" ]; then
     echo "glyphwave: checksum mismatch, not installed" >&2
     exit 1

@@ -325,6 +325,7 @@ through four themes:
   big letters of the `name` banner are its bigmono12 font, a rendering of
   Monospace Bold 12.
 
+glyphwave is licensed under MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE).
 cava, terminaltexteffects and ttfx are MIT licensed; see `NOTICE`. The
 algorithms were re-implemented here in glyphwave's own code; what the text
 effects take as-is from terminaltexteffects are its default palettes, glyph
