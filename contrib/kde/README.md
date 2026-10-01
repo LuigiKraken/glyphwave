@@ -43,10 +43,13 @@ after 5. Anything at or before the screensaver's start hides or ends it;
 setup warns about each one. After
 editing the lock timer by hand, `qdbus6 org.freedesktop.ScreenSaver /ScreenSaver configure`.
 
-glyphwave turns the terminal background black itself (OSC 11); a terminal
-that ignores that keeps its own background. If Konsole's scrollbar or margin
-shows, make a profile without them in Konsole and name it in
-`~/.config/glyphwave/config`; `glyphwave launch` passes it on as `--profile`:
+`glyphwave launch` opens Konsole with no scrollbar and no margin
+(`-p ScrollBarPosition=2 -p TerminalMargin=0`) and in the built-in
+WhiteOnBlack colour scheme, so the strip where the screen isn't a whole
+number of character cells is black too. Konsole doesn't take glyphwave's
+OSC 11 there. For a profile of your own (a font, say), name it in
+`~/.config/glyphwave/config`; `glyphwave launch` passes it on as `--profile`
+and keeps its colours, still without scrollbar and margin:
 
 ```ini
 [terminal]

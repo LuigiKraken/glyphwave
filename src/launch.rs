@@ -85,18 +85,31 @@ fn command(term: &str, cfg: &Config, bin: &str, now: bool) -> Option<Vec<String>
     let run: &[&str] = if now { &[bin, "--screensaver", "--now"] } else { &[bin, "--screensaver"] };
     let v = |a: &[&str]| a.iter().map(|s| s.to_string()).chain(run.iter().map(|s| s.to_string())).collect();
     Some(match term {
-        "kitty" => v(&["kitty", "--class", "glyphwave", "--start-as=fullscreen", "-o", "background=#000000"]),
-        "foot" => v(&["foot", "--app-id=glyphwave", "--fullscreen", "-o", "colors.background=000000"]),
+        // No scrollbar or padding, a black background, and the pointer hidden
+        // where the terminal can do that without a key press.
+        "kitty" => v(&[
+            "kitty", "--class", "glyphwave", "--start-as=fullscreen", "-o", "background=#000000",
+            "-o", "window_padding_width=0", "-o", "mouse_hide_wait=1",
+        ]),
+        "foot" => v(&["foot", "--app-id=glyphwave", "--fullscreen", "-o", "colors.background=000000", "-o", "pad=0x0"]),
         "alacritty" => v(&[
             "alacritty", "--class", "glyphwave", "-o", "window.startup_mode=\"Fullscreen\"",
-            "-o", "colors.primary.background=\"#000000\"", "-e",
+            "-o", "colors.primary.background=\"#000000\"", "-o", "window.padding.x=0", "-o", "window.padding.y=0", "-e",
         ]),
-        "ghostty" => v(&["ghostty", "--fullscreen=true", "--background=000000", "-e"]),
-        "wezterm" => v(&["wezterm", "start", "--class", "glyphwave", "--"]), // fullscreen via a window rule
+        "ghostty" => v(&["ghostty", "--fullscreen=true", "--background=000000", "--window-padding-x=0", "--window-padding-y=0", "-e"]),
+        "wezterm" => v(&[
+            "wezterm", "--config", "enable_scroll_bar=false", "--config", "window_padding={left=0,right=0,top=0,bottom=0}",
+            "start", "--class", "glyphwave", "--",
+        ]), // fullscreen via a window rule
         "konsole" => {
             let mut c = vec!["konsole".to_string()];
-            if let Some(p) = &cfg.konsole_profile {
-                c.extend(["--profile".to_string(), p.clone()]);
+            // No scrollbar or margin over any profile; black under the
+            // margin and the part-cell leftover unless the user's profile
+            // picks its own colours.
+            c.extend(["-p", "ScrollBarPosition=2", "-p", "TerminalMargin=0"].map(String::from));
+            match &cfg.konsole_profile {
+                Some(p) => c.extend(["--profile".to_string(), p.clone()]),
+                None => c.extend(["-p", "ColorScheme=WhiteOnBlack"].map(String::from)),
             }
             let rest = ["--fullscreen", "--hide-menubar", "--hide-tabbar", "--notransparency", "-e"];
             c.extend(rest.iter().chain(run).map(|s| s.to_string()));
@@ -105,7 +118,11 @@ fn command(term: &str, cfg: &Config, bin: &str, now: bool) -> Option<Vec<String>
         // standalone, so the process lives as long as the window and holds the lock
         "ptyxis" => vec!["ptyxis".into(), "-s".into(), "--fullscreen".into(), "-x".into(), format!("{} --screensaver{}", quote(bin), if now { " --now" } else { "" })],
         "gnome-terminal" => v(&["gnome-terminal", "--wait", "--full-screen", "--hide-menubar", "--"]),
-        "xterm" => v(&["xterm", "-class", "glyphwave", "-fullscreen", "-bg", "black", "-e"]),
+        // a black pointer on the black background
+        "xterm" => v(&[
+            "xterm", "-class", "glyphwave", "-fullscreen", "-bg", "black", "+sb", "-b", "0",
+            "-ms", "black", "-xrm", "*pointerColorBackground: black", "-e",
+        ]),
         _ => return None,
     })
 }
@@ -285,5 +302,19 @@ pub fn idle_watch() -> i32 {
             eprintln!("glyphwave: idle-watch needs GNOME's Mutter on the session bus: {e}");
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn konsole_black_only_without_a_profile() {
+        let c = command("konsole", &Config::default(), "gw", false).unwrap().join(" ");
+        assert!(c.starts_with("konsole -p ScrollBarPosition=2 -p TerminalMargin=0 -p ColorScheme=WhiteOnBlack --fullscreen"), "{c}");
+        let cfg = Config { konsole_profile: Some("Mine".into()), ..Config::default() };
+        let c = command("konsole", &cfg, "gw", false).unwrap().join(" ");
+        assert!(c.contains("-p TerminalMargin=0 --profile Mine --fullscreen") && !c.contains("ColorScheme"), "{c}");
     }
 }
