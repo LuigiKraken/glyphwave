@@ -39,6 +39,8 @@ pub struct Director {
     busy_next: bool,
     calm_next: bool,
     locked: Option<Theme>,
+    /// The theme a `--test` number key asked for next.
+    want: Option<Theme>,
     recent: Vec<Theme>,
     rng: Rng,
     /// Fast and slow level in dB, fast and slow intensity, and whether a
@@ -66,6 +68,7 @@ impl Director {
             busy_next: false,
             calm_next: false,
             locked: None,
+            want: None,
             recent: Vec::new(),
             rng: Rng::seeded(),
             fast: -60.0,
@@ -93,9 +96,15 @@ impl Director {
         self.force = true;
     }
 
+    /// `--test` 1–0: fade out the current hold and into `t`.
+    pub fn jump(&mut self, t: Theme) {
+        self.want = Some(t);
+        self.force = true;
+    }
+
     /// A themed cycle is starting: pick its theme and reset the timers.
     pub fn start(&mut self, f: &Features) -> Theme {
-        let t = self.locked.unwrap_or_else(|| self.pick(f));
+        let t = self.want.take().or(self.locked).unwrap_or_else(|| self.pick(f));
         self.recent.push(t);
         if self.recent.len() > 4 {
             self.recent.remove(0);
@@ -186,7 +195,7 @@ impl Director {
         let busy = f.intensity > 0.55;
 
         self.cue = if self.force {
-            if busy { Cue::Cut } else { Cue::Fade }
+            if busy && self.want.is_none() { Cue::Cut } else { Cue::Fade }
         } else if (f.drop || surge) && self.since > MIN_CUT {
             self.busy_next = true;
             Cue::Cut

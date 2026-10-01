@@ -3,9 +3,15 @@
 //! pipewire-utils, not always pulseaudio-utils). Float32 stereo at 48 kHz —
 //! PipeWire's native rate, so no resampling. A reader thread keeps the newest samples in a ring; the DSP copies the
 //! window it needs each frame (cava does the same with its input buffer).
+//!
+//! The monitor records the full signal even with the sink muted or at 0 %,
+//! so `watch_sink` follows the default sink's mute and volume (`pactl
+//! subscribe`, re-read on each sink event) and main treats silence by the
+//! knob like a pause.
 
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -161,6 +167,62 @@ impl Drop for Capture {
     }
 }
 
+/// `pactl` with untranslated output.
+fn pactl(args: &[&str]) -> Command {
+    let mut c = Command::new("pactl");
+    c.args(args).env("LC_ALL", "C").stdin(Stdio::null()).stderr(Stdio::null());
+    c
+}
+
+/// `pactl get-sink-mute` / `get-sink-volume` output → whether nothing can be
+/// heard: muted, or every channel at 0 %.
+fn hushed(mute: &str, volume: &str) -> bool {
+    let muted = mute.trim() == "Mute: yes";
+    let mut pcts = volume.split_whitespace().filter_map(|w| w.strip_suffix('%')?.parse::<u32>().ok()).peekable();
+    muted || (pcts.peek().is_some() && pcts.all(|p| p == 0))
+}
+
+fn read_hushed() -> bool {
+    let out = |a: &str| {
+        pactl(&[a, "@DEFAULT_SINK@"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default()
+    };
+    hushed(&out("get-sink-mute"), &out("get-sink-volume"))
+}
+
+/// Follow the default sink's mute and volume. One `pactl subscribe` sleeps
+/// on its pipe; a sink or server event (the default changing) re-reads the
+/// state, once per burst. Without pactl it just stays false.
+pub fn watch_sink() -> Arc<AtomicBool> {
+    let hushed = Arc::new(AtomicBool::new(false));
+    let h = hushed.clone();
+    std::thread::spawn(move || {
+        let Ok(mut child) = pactl(&["subscribe"]).stdout(Stdio::piped()).spawn() else { return };
+        h.store(read_hushed(), Ordering::Relaxed);
+        let mut rd = BufReader::new(child.stdout.take().unwrap());
+        let mut line = String::new();
+        let mut dirty = false;
+        while rd.read_line(&mut line).is_ok_and(|n| n > 0) {
+            // "Event 'change' on sink #56", not sink-input (every stream's own)
+            dirty |= line.contains(" on sink #") || line.contains(" on server");
+            line.clear();
+            if dirty && rd.buffer().is_empty() {
+                dirty = false;
+                h.store(read_hushed(), Ordering::Relaxed);
+            }
+        }
+        h.store(false, Ordering::Relaxed);
+        let _ = child.wait();
+    });
+    hushed
+}
+
+/// How busy the demo track is, 0 (just the pad) to 6; 4 is the full mix
+/// (`[` / `]` in `--test`).
+pub static DEMO_LEVEL: AtomicU32 = AtomicU32::new(4);
+
 /// A synthetic 124 BPM track (kick, off-beat hats, snare on 2/4, bass, pad,
 /// with a breakdown and a drop every 32 bars) written into the ring in real
 /// time. For `--demo` and for testing without a player.
@@ -183,6 +245,9 @@ pub fn start_synth(ring: Arc<Mutex<Ring>>) {
         let notes = [55.0f32, 55.0, 65.41, 49.0]; // A1 A1 C2 G1, one per bar
         let mut lp = 0.0f32;
         loop {
+            // drums and bass fade out below the full mix, push past it above
+            let lv = DEMO_LEVEL.load(Ordering::Relaxed) as f32 / 4.0;
+            let (drums, bass) = (lv, lv.min(1.0));
             let mut g = ring.lock().unwrap();
             for _ in 0..chunk {
                 let tt = t as f32;
@@ -194,17 +259,17 @@ pub fn start_synth(ring: Arc<Mutex<Ring>>) {
                 let mut s = 0.0f32;
                 if !breakdown {
                     let f = 45.0 + 120.0 * (-pb * 30.0).exp();
-                    s += 0.9 * (std::f32::consts::TAU * f * pb).sin() * (-pb * 7.0).exp();
+                    s += drums * 0.9 * (std::f32::consts::TAU * f * pb).sin() * (-pb * 7.0).exp();
                     let root = notes[bar % 4];
                     let ph = (tt * root).fract();
-                    s += 0.25 * (ph * 2.0 - 1.0) * (0.6 + 0.4 * (-pb * 4.0).exp());
+                    s += bass * 0.25 * (ph * 2.0 - 1.0) * (0.6 + 0.4 * (-pb * 4.0).exp());
                 }
                 let off = ((b + 0.5).fract()) * beat;
-                s += 0.18 * noise() * (-off * 40.0).exp() * if breakdown { 0.4 } else { 1.0 };
+                s += drums * 0.18 * noise() * (-off * 40.0).exp() * if breakdown { 0.4 } else { 1.0 };
                 let beat_in_bar = (b as usize) % 4;
                 if !breakdown && (beat_in_bar == 1 || beat_in_bar == 3) {
-                    s += 0.35 * noise() * (-pb * 18.0).exp();
-                    s += 0.3 * (std::f32::consts::TAU * 190.0 * pb).sin() * (-pb * 25.0).exp();
+                    s += drums * 0.35 * noise() * (-pb * 18.0).exp();
+                    s += drums * 0.3 * (std::f32::consts::TAU * 190.0 * pb).sin() * (-pb * 25.0).exp();
                 }
                 // pad: detuned saws through a lowpass that opens in the breakdown
                 let pad = [220.0f32, 261.6, 329.6]
@@ -217,7 +282,7 @@ pub fn start_synth(ring: Arc<Mutex<Ring>>) {
                 if breakdown && section >= 30 {
                     s += 0.15 * noise() * ((section - 30) as f32 * 4.0 + b.fract() * 4.0) / 8.0;
                 }
-                let s = (s * 0.6).tanh() * 0.5;
+                let s = (s * 0.6).tanh() * (0.25 + 0.25 * lv);
                 let p = g.pos;
                 g.l[p] = s;
                 g.r[p] = s * 0.9 + 0.05 * noise();
@@ -233,4 +298,22 @@ pub fn start_synth(ring: Arc<Mutex<Ring>>) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hushed;
+
+    const VOL: &str = "Volume: front-left: 42598 /  65% / -11.23 dB,   front-right: 42598 /  65% / -11.23 dB\n        balance 0.00\n";
+    const ZERO: &str = "Volume: front-left: 0 /   0% / -inf dB,   front-right: 0 /   0% / -inf dB\n        balance 0.00\n";
+
+    #[test]
+    fn muted_or_at_zero_is_hushed() {
+        assert!(!hushed("Mute: no\n", VOL));
+        assert!(hushed("Mute: yes\n", VOL));
+        assert!(hushed("Mute: no\n", ZERO));
+        assert!(!hushed("Mute: no\n", "Volume: front-left: 0 /   0% / -inf dB,   front-right: 655 /   1% / -120.00 dB"));
+        // no sink, or pactl failed: not hushed
+        assert!(!hushed("", ""));
+    }
 }

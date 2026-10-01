@@ -4,6 +4,7 @@
 
 mod art;
 mod audio;
+mod calls;
 mod canvas;
 mod color;
 mod dsp;
@@ -27,6 +28,8 @@ USAGE: glyphwave [options]
   --screensaver     exit on mouse motion, on any key but F1–F12 and the
                     music keys, or when the KDE/GNOME locker takes over
   --demo            play a built-in synthetic track instead of the sound card
+  --test            try things out in this terminal: --demo and --debug,
+                    plus the TEST KEYS below
   --idle            never use the music themes
   --fps N           frame rate (default 30)
   --colors MODE     truecolor or 256 (default: from COLORTERM / TERM)
@@ -47,11 +50,19 @@ KEYS (interactive): q quit · space play/pause · n next · p previous ·
   your file)
 MUSIC KEYS (also in --screensaver, without waking it): - previous ·
   + next · Enter play/pause
+TEST KEYS (--test): 1–0 the themes in the order above · d t s w fake a
+  Discord / Teams / Slack / WhatsApp call · m fake mute · space fake pause ·
+  [ ] calmer / louder demo · o debug (in place of d)
+
+A muted sink, or one at 0 %, counts as paused. While a call rings (read from
+the desktop's call notification) the banner makes way for the app's icon and
+the caller, and any key or the mouse ends glyphwave, the music keys too.
 ";
 
 struct Opts {
     screensaver: bool,
     demo: bool,
+    test: bool,
     idle: bool,
     fps: f32,
     banner: Option<String>,
@@ -69,6 +80,7 @@ fn opts() -> Opts {
     let mut o = Opts {
         screensaver: false,
         demo: false,
+        test: false,
         idle: false,
         fps: 30.0,
         banner: None,
@@ -86,6 +98,7 @@ fn opts() -> Opts {
         match a.as_str() {
             "--screensaver" => o.screensaver = true,
             "--demo" => o.demo = true,
+            "--test" => (o.test, o.demo, o.debug) = (true, true, true),
             "--idle" => o.idle = true,
             "--stats" => o.stats = true,
             "--debug" => o.debug = true,
@@ -160,6 +173,10 @@ fn main() {
     if o.demo {
         audio::start_synth(cap.ring.clone());
     }
+    let calls = calls::Calls::start();
+    // the demo isn't on the sink; --test fakes a mute with m instead
+    let hushed = if o.demo { Arc::new(AtomicBool::new(false)) } else { audio::watch_sink() };
+    let (mut fake_pause, mut fake_mute) = (false, false);
     let mut an = dsp::Analyzer::new();
     let mut spec = fx::spectrum::Spectrum::new();
     let mut stars = fx::stars::Stars::new();
@@ -183,6 +200,10 @@ fn main() {
     let mut label_f = Fader::default();
     let mut ribbon_f = Fader::default();
     let mut lift = Fader::default();
+    let mut call_f = Fader::default();
+    let mut scene_f = Fader { v: 1.0, target: 1.0 };
+    // the last call seen, kept after it ends for the fade-out
+    let (mut call, mut call_seen) = (None::<calls::Call>, 0u32);
     let mut idle_layers = [Fader::default(); 2]; // stars, rain
     let mut idle_forced = o.idle;
     let mut debug = o.debug;
@@ -210,17 +231,35 @@ fn main() {
             term::poll_input(wait.as_millis() as i32, tty_in, &mut input);
             if !input.is_empty() {
                 let t = start.elapsed().as_secs_f32();
+                // while a call rings every key ends glyphwave, music keys too
+                calls.sync(&mut call_seen, &mut call);
+                let ringing = call.as_ref().is_some_and(|c| c.ringing(Instant::now()));
                 if o.screensaver {
                     if t <= grace {
                         input.clear(); // swallow the launch keypress
-                    } else if term::wakes(&input) {
+                    } else if ringing || term::wakes(&input) {
                         break 'main;
                     }
                     input.retain(|&b| term::is_media(b)); // drop F-key sequences
+                } else if ringing {
+                    break 'main;
                 }
                 for &b in &input {
                     match b {
                         b'q' | 3 | 27 => break 'main,
+                        b'0'..=b'9' if o.test => dir.jump(fx::themes::ALL[(b - b'0' + 9) as usize % 10]),
+                        b'd' if o.test => calls.fake("discord", "pixelfox", "Incoming call"),
+                        b't' if o.test => calls.fake("Microsoft Teams", "Morgan Lee is calling you", ""),
+                        b's' if o.test => calls.fake("Slack", "Sam Rivera invited you to a huddle", ""),
+                        b'w' if o.test => calls.fake("WhatsApp", "Incoming voice call", "+49 151 2345 6789"),
+                        b'm' if o.test => fake_mute = !fake_mute,
+                        b' ' if o.test => fake_pause = !fake_pause,
+                        b'[' | b']' if o.test => {
+                            let lv = audio::DEMO_LEVEL.load(Ordering::Relaxed);
+                            let lv = if b == b'[' { lv.saturating_sub(1) } else { (lv + 1).min(6) };
+                            audio::DEMO_LEVEL.store(lv, Ordering::Relaxed);
+                        }
+                        b'o' if o.test => debug = !debug,
                         b' ' | b'\r' | b'\n' => watcher.control("PlayPause"),
                         b'n' | b'+' => watcher.control("Next"),
                         b'p' | b'-' => watcher.control("Previous"),
@@ -269,8 +308,10 @@ fn main() {
 
         let track = watcher.snapshot();
 
-        // audio: capture while something plays (or the demo), stop after 10 s
-        let playing = o.demo || track.playing();
+        // audio: capture while something plays (or the demo), stop after 10 s;
+        // a muted sink, or one at 0 %, counts as paused
+        let hush = fake_mute || hushed.load(Ordering::Relaxed);
+        let playing = !hush && ((o.demo && !fake_pause) || track.playing());
         not_playing = if playing { 0.0 } else { not_playing + dt };
         if !o.demo {
             if playing && !idle_forced {
@@ -307,12 +348,23 @@ fn main() {
             idle_cycle = banner.cycles;
             idle_layers[0].target = if !themed && rng.chance(0.3) { 1.0 } else { 0.0 };
         }
-        label_f.target = if track.playing() && !idle_forced { 1.0 } else { 0.0 };
+        label_f.target = if track.playing() && !hush && !idle_forced { 1.0 } else { 0.0 };
         label_f.step(dt, if label_f.target > 0.5 { 1.0 } else { 0.4 });
 
         phase = (phase + dt * 0.004) % 1.0;
         let light = 0.8 + 0.2 * f.loud * music.a() + 0.2 * (1.0 - music.a());
         let cx = Ctx { f, w, h, t, dt, palette: &palette, grad: &grad, phase, light };
+
+        // a ringing call: the scene (banner, theme, ribbon, ambience) fades
+        // out wherever it is, then the call view fades in; once that has
+        // faded out again the scene returns with a fresh intro
+        calls.sync(&mut call_seen, &mut call);
+        let ringing = call.as_ref().is_some_and(|c| c.ringing(now));
+        scene_f.target = if ringing || call_f.on() { 0.0 } else { 1.0 };
+        scene_f.step(dt, 0.3);
+        if ringing && !scene_f.on() {
+            banner.drop_cycle();
+        }
 
         // ------------------------------------------------------ compose
         cv.clear();
@@ -320,26 +372,41 @@ fn main() {
             fl.step(dt, 2.0);
         }
         idle_layers[1].target = if banner.wants_rain() { 1.0 } else { 0.0 };
-        if idle_layers[1].on() {
-            rain.draw(&mut cv, &cx, idle_layers[1].a());
-        }
-        if idle_layers[0].on() {
-            stars.draw(&mut cv, &cx, idle_layers[0].a());
-        }
-        cv.resolve_dots();
         // the music ribbon runs under every phase; the floor theme has its own bars
         let holding = banner.holding();
         ribbon_f.target = if want_music && holding != Some(fx::themes::Theme::Floor) { 1.0 } else { 0.0 };
         ribbon_f.step(dt, if ribbon_f.target > 0.5 { 0.8 } else { 0.6 });
         lift.target = if holding.is_none() { 1.0 } else { 0.0 };
         lift.step(dt, 0.6);
-        if ribbon_f.on() && banner.fits {
-            let room = (h as i32 - banner.bottom() - 1).max(0) as usize;
-            ribbon.draw(&mut cv, &cx, room, ribbon_f.a(), lift.a(), banner.tint());
+        if scene_f.on() {
+            if idle_layers[1].on() {
+                rain.draw(&mut cv, &cx, idle_layers[1].a());
+            }
+            if idle_layers[0].on() {
+                stars.draw(&mut cv, &cx, idle_layers[0].a());
+            }
+            cv.resolve_dots();
+            if ribbon_f.on() && banner.fits {
+                let room = (h as i32 - banner.bottom() - 1).max(0) as usize;
+                ribbon.draw(&mut cv, &cx, room, ribbon_f.a(), lift.a(), banner.tint());
+            }
+            banner.draw(&mut cv, &cx, want_music, &mut dir, &mut spec);
+            banner.sample(&cv, dt);
+            if scene_f.v < 1.0 {
+                let k = scene_f.a();
+                for y in 0..h as i32 {
+                    for x in 0..w as i32 {
+                        cv.dim(x, y, k);
+                    }
+                }
+            }
         }
-        banner.draw(&mut cv, &cx, want_music, &mut dir, &mut spec);
-        banner.sample(&cv, dt);
         fx::label::draw(&mut cv, &cx, &track, label_f.a());
+        call_f.target = if ringing && !scene_f.on() { 1.0 } else { 0.0 };
+        call_f.step(dt, if ringing { 0.3 } else { 0.6 });
+        if let Some(c) = call.as_ref().filter(|_| call_f.on()) {
+            fx::call::draw(&mut cv, &cx, c, call_f.a());
+        }
         if debug {
             let s = format!(
                 " {:>4.1}ms {:>6}B  {:>5.1}bpm conf {:.2}  loud {:.2} en {:.2} int {:.2} cen {:.2} flat {:.2}  {}{}{}  ten {:.2}  {} ",
@@ -357,7 +424,9 @@ fn main() {
                 if f.hat_env > 0.5 { 'H' } else { '·' },
                 f.tension,
                 if themed { dir.name.clone() } else { format!("idle:{:?}", banner.current) },
-            );
+            ) + if hush { "muted " } else { "" }
+                + if fake_pause { "paused " } else { "" }
+                + &if o.test { format!("demo {}/6 ", audio::DEMO_LEVEL.load(Ordering::Relaxed)) } else { String::new() };
             for x in 0..w as i32 {
                 cv.dim(x, h as i32 - 1, 0.1);
             }

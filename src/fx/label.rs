@@ -7,7 +7,7 @@ use crate::canvas::{BLANK, Canvas};
 use crate::color::Rgb;
 use crate::mpris::Track;
 
-fn fit(s: &str, w: usize) -> String {
+pub fn fit(s: &str, w: usize) -> String {
     if s.chars().count() <= w {
         s.to_string()
     } else {

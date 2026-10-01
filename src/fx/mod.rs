@@ -4,6 +4,7 @@
 //! not positions, so motion stays continuous (the Magnetosphere lesson).
 
 pub mod banner;
+pub mod call;
 pub mod effects;
 pub mod label;
 pub mod stars;

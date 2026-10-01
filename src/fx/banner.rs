@@ -226,6 +226,13 @@ impl Banner {
         self.pending = Some(texts.iter().map(|t| parse(t)).collect());
     }
 
+    /// Drop the running cycle (once a call has faded it out): the next draw
+    /// starts a fresh intro, the letters at home.
+    pub fn drop_cycle(&mut self) {
+        self.phase = Phase::Gap(0.0);
+        self.waiting = None;
+    }
+
     /// End the current idle hold early (`v` while idle).
     pub fn skip_idle(&mut self) {
         if let Phase::Hold(t) = &mut self.phase {
