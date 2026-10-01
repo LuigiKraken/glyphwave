@@ -235,6 +235,9 @@ fn main() {
     let mut label_f = Fader::default();
     let mut ribbon_f = Fader::default();
     let mut lift = Fader::default();
+    // how wild the music is right now, for the ribbon's sparks, and the
+    // seconds left of the rush after a drop
+    let (mut wild, mut rush) = (Fader::default(), 0.0f32);
     let mut call_f = Fader::default();
     let mut pulse = fx::call::Pulse::new();
     let mut scene_f = Fader { v: 1.0, target: 1.0 };
@@ -439,6 +442,12 @@ fn main() {
         ribbon_f.step(dt, if ribbon_f.target > 0.5 { 0.8 } else { 0.6 });
         lift.target = if holding.is_none() { 1.0 } else { 0.0 };
         lift.step(dt, 0.6);
+        // wild: the stretch after a drop, or peak intensity under one of the
+        // explosive themes (shock, glitch, warp, fire)
+        rush = if f.drop { 8.0 } else { (rush - dt).max(0.0) };
+        let peak = holding.is_some_and(|t| t.busy() >= 0.75) && f.intensity > 0.75;
+        wild.target = if rush > 0.0 || peak { 1.0 } else { 0.0 };
+        wild.step(dt, if wild.target > 0.5 { 1.0 } else { 2.5 });
         if scene_f.on() {
             if idle_layers[1].on() {
                 rain.draw(&mut cv, &cx, idle_layers[1].a());
@@ -449,7 +458,7 @@ fn main() {
             cv.resolve_dots();
             if ribbon_f.on() && banner.fits {
                 let room = (h as i32 - banner.bottom() - 1).max(0) as usize;
-                ribbon.draw(&mut cv, &cx, room, ribbon_f.a(), lift.a(), banner.tint());
+                ribbon.draw(&mut cv, &cx, room, ribbon_f.a(), lift.a(), wild.a(), banner.tint());
             }
             banner.draw(&mut cv, &cx, want_music, &mut dir, &mut spec);
             banner.sample(&cv, dt);
