@@ -36,15 +36,19 @@ after 15 (10 on battery), lock after 5. Anything at or before the
 screensaver's start hides or ends it; setup warns about each one. After
 editing the lock timer by hand, `qdbus6 org.freedesktop.ScreenSaver /ScreenSaver configure`.
 
-Konsole needs a profile with a black background, no scrollbar and no
-margin, or the screensaver shows a border. Setup writes one,
-`~/.local/share/konsole/Glyphwave.profile` with its colour scheme, and names
-it in `~/.config/glyphwave/config`:
+glyphwave turns the terminal background black itself (OSC 11); a terminal
+that ignores that keeps its own background. If Konsole's scrollbar or margin
+shows, make a profile without them in Konsole and name it in
+`~/.config/glyphwave/config`; `glyphwave launch` passes it on as `--profile`:
 
 ```ini
 [terminal]
-konsole_profile = Glyphwave
+konsole_profile = MyProfile
 ```
 
 glyphwave exits by itself when the KDE locker comes up (it watches
 `org.freedesktop.ScreenSaver` on the session bus), so no lock hook is needed.
+
+Sleep while music plays: players hold off sleep while they play. When they
+let go, PowerDevil restarts the idle count, so the computer sleeps the full
+timeout after the music stops, not straight away.

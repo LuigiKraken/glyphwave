@@ -51,7 +51,6 @@ pub struct Config {
     pub fps: Option<f32>,
     pub terminal: Option<String>,
     pub konsole_profile: Option<String>,
-    pub kde_black_profile: bool,
     pub hyprland_locker: String,
     pub sway_locker: String,
     pub x11_locker: String,
@@ -67,7 +66,6 @@ impl Default for Config {
             fps: None,
             terminal: None,
             konsole_profile: None,
-            kde_black_profile: true,
             hyprland_locker: "hyprlock".into(),
             sway_locker: "swaylock -f".into(),
             x11_locker: "i3lock -c 000000".into(),
@@ -161,7 +159,6 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             ("battery", "then_after") => minutes(&v).map(|m| ba = Some(m)),
             ("terminal", "terminal") => set(&mut c.terminal, v),
             ("terminal", "konsole_profile") => set(&mut c.konsole_profile, v),
-            ("kde", "black_profile") => yes_no(&v).map(|y| c.kde_black_profile = y),
             ("hyprland", "locker") => set_str(&mut c.hyprland_locker, v),
             ("sway", "locker") => set_str(&mut c.sway_locker, v),
             ("x11", "locker") => set_str(&mut c.x11_locker, v),
@@ -203,7 +200,8 @@ impl Config {
         s += &format!("fps = {}\n", self.fps.unwrap_or(30.0));
 
         let opt = |on: bool| if on { "" } else { "# " };
-        s += "\n# Battery times, when they should differ from the ones above.\n";
+        s += "\n# Battery times, when they should differ from the ones above. KDE and GNOME\n\
+              # have one lock / blank timer, which follows the plugged-in times.\n";
         let b = self.bat();
         let on = self.battery.is_some();
         s += &format!("{}[battery]\n", opt(on));
@@ -212,22 +210,20 @@ impl Config {
         s += &format!("{}then_after = {}\n", opt(on), b.after);
 
         s += "\n# Which terminal opens the screensaver; empty picks the first installed of\n\
-              # kitty foot alacritty ghostty wezterm konsole ptyxis gnome-terminal xterm.\n";
+              # kitty foot alacritty ghostty wezterm konsole ptyxis gnome-terminal xterm.\n\
+              # konsole_profile names a Konsole profile of your own (e.g. no scrollbar).\n";
         let on = self.terminal.is_some() || self.konsole_profile.is_some();
         s += &format!("{}[terminal]\n", opt(on));
         s += &format!("{}terminal = {}\n", opt(self.terminal.is_some()), self.terminal.as_deref().unwrap_or("konsole"));
         s += &format!(
             "{}konsole_profile = {}\n",
             opt(self.konsole_profile.is_some()),
-            self.konsole_profile.as_deref().unwrap_or("Glyphwave")
+            self.konsole_profile.as_deref().unwrap_or("MyProfile")
         );
 
-        s += "\n# KDE: setup writes a black, borderless Konsole profile named Glyphwave.\n";
-        let on = !self.kde_black_profile;
-        s += &format!("{}[kde]\n{}black_profile = {}\n", opt(on), opt(on), if self.kde_black_profile { "yes" } else { "no" });
-
-        s += "\n# GNOME has no settings here: setup adds an idle watcher to\n\
-              # ~/.config/autostart and moves GNOME's own blank / lock / suspend timers.\n";
+        s += "\n# KDE and GNOME have no settings here: setup edits their own timers\n\
+              # (powerdevilrc, kscreenlockerrc; gsettings plus an idle watcher in\n\
+              # ~/.config/autostart).\n";
 
         for (name, val, def) in [
             ("hyprland", &self.hyprland_locker, "hyprlock"),
@@ -287,13 +283,11 @@ mod tests {
     #[test]
     fn sections() {
         let (c, e) = parse(
-            "[terminal]\nterminal = konsole\nkonsole_profile = Black\n[kde]\nblack_profile = no\n\
-             [sway]\nlocker = waylock\n",
+            "[terminal]\nterminal = konsole\nkonsole_profile = Black\n[sway]\nlocker = waylock\n",
         );
         assert!(e.is_empty(), "{e:?}");
         assert_eq!(c.terminal.as_deref(), Some("konsole"));
         assert_eq!(c.konsole_profile.as_deref(), Some("Black"));
-        assert!(!c.kde_black_profile);
         assert_eq!(c.sway_locker, "waylock");
     }
 

@@ -10,7 +10,7 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq)]
 enum Desktop {
     Kde,
     Gnome,
@@ -19,47 +19,31 @@ enum Desktop {
     X11,
 }
 
-impl Desktop {
-    fn parse(s: &str) -> Option<Desktop> {
-        Some(match s.to_ascii_lowercase().as_str() {
-            "kde" | "plasma" => Desktop::Kde,
-            "gnome" => Desktop::Gnome,
-            "hyprland" => Desktop::Hyprland,
-            "sway" => Desktop::Sway,
-            "x11" => Desktop::X11,
-            _ => return None,
-        })
-    }
+const DESKTOPS: [(&str, Desktop, &str); 5] = [
+    ("kde", Desktop::Kde, "KDE Plasma"),
+    ("gnome", Desktop::Gnome, "GNOME"),
+    ("hyprland", Desktop::Hyprland, "Hyprland"),
+    ("sway", Desktop::Sway, "sway"),
+    ("x11", Desktop::X11, "X11"),
+];
 
-    fn detect() -> Option<Desktop> {
-        let env = |k| std::env::var(k).unwrap_or_default();
-        let cur = env("XDG_CURRENT_DESKTOP");
-        for part in cur.split(':') {
-            if let Some(d) = Desktop::parse(part) {
-                return Some(d);
-            }
-        }
-        if !env("HYPRLAND_INSTANCE_SIGNATURE").is_empty() {
-            return Some(Desktop::Hyprland);
-        }
-        if !env("SWAYSOCK").is_empty() {
-            return Some(Desktop::Sway);
-        }
-        if env("WAYLAND_DISPLAY").is_empty() && !env("DISPLAY").is_empty() {
-            return Some(Desktop::X11);
-        }
-        None
-    }
+fn parse_desktop(s: &str) -> Option<Desktop> {
+    DESKTOPS.iter().find(|d| d.0 == s.to_ascii_lowercase()).map(|d| d.1)
+}
 
-    fn name(self) -> &'static str {
-        match self {
-            Desktop::Kde => "KDE Plasma",
-            Desktop::Gnome => "GNOME",
-            Desktop::Hyprland => "Hyprland",
-            Desktop::Sway => "sway",
-            Desktop::X11 => "X11",
-        }
+fn desktop_name(d: Desktop) -> &'static str {
+    DESKTOPS.iter().find(|x| x.1 == d).map_or("", |x| x.2)
+}
+
+fn detect() -> Option<Desktop> {
+    let env = |k| std::env::var(k).unwrap_or_default();
+    if let Some(d) = env("XDG_CURRENT_DESKTOP").split(':').find_map(parse_desktop) {
+        return Some(d);
     }
+    if env("WAYLAND_DISPLAY").is_empty() && !env("DISPLAY").is_empty() {
+        return Some(Desktop::X11);
+    }
+    None
 }
 
 // ------------------------------------------------------------------ prompts
@@ -75,124 +59,84 @@ fn ask(q: &str, def: &str) -> String {
     if s.is_empty() { def.to_string() } else { s.to_string() }
 }
 
-fn ask_yes(q: &str, def: bool) -> bool {
+/// Ask until `parse` accepts the answer.
+fn ask_for<T>(q: &str, def: &str, hint: &str, parse: impl Fn(&str) -> Option<T>) -> T {
     loop {
-        match ask(q, if def { "Y/n" } else { "y/N" }).to_ascii_lowercase().as_str() {
-            "y" | "yes" => return true,
-            "n" | "no" => return false,
-            "y/n" => return def,
-            _ => println!("  yes or no"),
+        if let Some(v) = parse(&ask(q, def).to_lowercase()) {
+            return v;
         }
+        println!("  {hint}");
     }
 }
 
-fn ask_minutes(q: &str, def: u32) -> u32 {
-    loop {
-        match ask(q, &def.to_string()).parse::<u32>() {
-            Ok(n) if n > 0 => return n,
-            _ => println!("  a number of minutes, 1 or more"),
-        }
-    }
+fn ask_yes(q: &str) -> bool {
+    ask_for(q, "y/N", "yes or no", |a| match a {
+        "y" | "yes" => Some(true),
+        "n" | "no" | "y/n" => Some(false),
+        _ => None,
+    })
 }
 
 fn ask_times(t: Times, what: &str) -> Times {
-    let start = ask_minutes(&format!("Start the screensaver after how many idle minutes{what}?"), t.start);
-    let then = loop {
-        match Then::parse(&ask("Then what: lock, screen-off, sleep or none?", t.then.name())) {
-            Some(x) => break x,
-            None => println!("  one of lock, screen-off, sleep, none (no shutdown)"),
-        }
-    };
-    let after = if then == Then::Nothing {
-        t.after
-    } else {
-        ask_minutes(&format!("{} how many minutes after the screensaver starts?", then.name()), t.after)
+    let mins = |a: &str| a.parse::<u32>().ok().filter(|&n| n > 0);
+    let start = ask_for(&format!("Start after how many idle minutes{what}?"), &t.start.to_string(), "a number, 1 or more", mins);
+    let then = ask_for("Then: lock, screen-off, sleep or none?", t.then.name(), "lock, screen-off, sleep or none", Then::parse);
+    let after = match then {
+        Then::Nothing => t.after,
+        _ => ask_for("How many minutes after the screensaver starts?", &t.after.to_string(), "a number, 1 or more", mins),
     };
     Times { start, then, after }
 }
 
 fn summary(c: &Config) -> String {
-    let t = |t: Times| match t.then {
-        Then::Nothing => format!("start after {} min", t.start),
-        x => format!("start after {} min, {} {} min later", t.start, x.name(), t.after),
+    let t = |t: Times| format!("start after {} min, then {} {} min later", t.start, t.then.name(), t.after);
+    let bat = match (c.on_battery, c.battery) {
+        (false, _) => "only plugged in".to_string(),
+        (true, None) => "on battery too".to_string(),
+        (true, Some(b)) => format!("on battery {}", t(b)),
     };
-    let mut s = t(c.ac);
-    match (c.on_battery, c.battery) {
-        (false, _) => s += "; only when plugged in",
-        (true, None) => s += "; on battery too",
-        (true, Some(b)) => s += &format!("; on battery: {}", t(b)),
-    }
-    s + &format!("; banner {}", c.banner.as_deref().unwrap_or("(default)"))
+    format!("{}; {bat}; banner {}", t(c.ac), c.banner.as_deref().unwrap_or("(default)"))
 }
 
 fn questions(mut c: Config) -> Config {
     c.ac = ask_times(c.ac, "");
-    loop {
-        let def = match (c.on_battery, c.battery) {
-            (false, _) => "no",
-            (true, None) => "yes",
-            (true, Some(_)) => "own",
-        };
-        match ask("On battery too? yes, no (only plugged in), or own (other times on battery)", def).as_str() {
-            "yes" => (c.on_battery, c.battery) = (true, None),
-            "no" => c.on_battery = false,
-            "own" => {
-                c.on_battery = true;
-                let b = ask_times(c.bat(), " on battery");
-                c.battery = Some(b).filter(|b| *b != c.ac);
-            }
-            _ => {
-                println!("  yes, no or own");
-                continue;
-            }
-        }
-        break;
+    let def = match (c.on_battery, c.battery) {
+        (false, _) => "no",
+        (true, None) => "yes",
+        _ => "own",
+    };
+    let a = ask_for("On battery too? yes, no, or own (other times)", def, "yes, no or own", |a| {
+        ["yes", "no", "own"].contains(&a).then(|| a.to_string())
+    });
+    c.on_battery = a != "no";
+    c.battery = None;
+    if a == "own" {
+        let b = ask_times(c.ac, " on battery");
+        c.battery = Some(b).filter(|b| *b != c.ac);
     }
-    let b = ask("Banner: logo, name, or the path to a text file?", c.banner.as_deref().unwrap_or("logo"));
-    c.banner = Some(b);
+    c.banner = Some(ask("Banner: logo, name, or the path to a text file?", c.banner.as_deref().unwrap_or("logo")));
     c
-}
-
-// ------------------------------------------------------------------ paths
-
-struct Dirs {
-    home: PathBuf,
-    config: PathBuf,
-    data: PathBuf,
-}
-
-impl Dirs {
-    fn get() -> Dirs {
-        let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
-        let data = match std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
-            Some(d) => PathBuf::from(d),
-            None => home.join(".local/share"),
-        };
-        Dirs { config: config::dir(), data, home }
-    }
-
-    fn backup(&self) -> PathBuf {
-        self.config.join("glyphwave/setup-backup")
-    }
-
-    fn show(&self, p: &Path) -> String {
-        match p.strip_prefix(&self.home) {
-            Ok(r) => format!("~/{}", r.display()),
-            Err(_) => p.display().to_string(),
-        }
-    }
 }
 
 // ------------------------------------------------------------------ backups
 
-/// What setup touched, in ~/.config/glyphwave/setup-backup/manifest, so
-/// `--remove` can undo it. Only the first change of each thing is recorded:
-/// the original stays the original across re-runs.
-#[derive(Debug, PartialEq)]
+fn home() -> PathBuf {
+    PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+}
+
+fn tilde(p: &Path) -> String {
+    match p.strip_prefix(home()) {
+        Ok(r) => format!("~/{}", r.display()),
+        Err(_) => p.display().to_string(),
+    }
+}
+
+/// What setup touched, in ~/.config/glyphwave/setup-backup/manifest. Only the
+/// first change of each thing is recorded, so the original stays the
+/// original across re-runs.
 enum Entry {
     /// the file existed; its original is backup/<n>
     Saved(usize, PathBuf),
-    /// setup created the file
     Created(PathBuf),
     /// a GNOME setting and its original value; None = was at its default
     Setting(String, String, Option<String>),
@@ -204,73 +148,50 @@ struct Manifest {
 }
 
 impl Manifest {
-    fn load(dir: PathBuf) -> Manifest {
+    fn load() -> Manifest {
+        let dir = config::dir().join("glyphwave/setup-backup");
         let text = std::fs::read_to_string(dir.join("manifest")).unwrap_or_default();
         let entries = text
             .lines()
-            .filter_map(|l| {
-                let f: Vec<&str> = l.split('\t').collect();
-                Some(match f.as_slice() {
-                    ["saved", n, p] => Entry::Saved(n.parse().ok()?, p.into()),
-                    ["created", p] => Entry::Created(p.into()),
-                    ["setting", s, k, v] => Entry::Setting(s.to_string(), k.to_string(), v.strip_prefix('=').map(str::to_string)),
-                    _ => return None,
-                })
+            .filter_map(|l| match l.split('\t').collect::<Vec<_>>().as_slice() {
+                ["saved", n, p] => Some(Entry::Saved(n.parse().ok()?, p.into())),
+                ["created", p] => Some(Entry::Created(p.into())),
+                ["setting", s, k, v] => Some(Entry::Setting(s.to_string(), k.to_string(), v.strip_prefix('=').map(Into::into))),
+                _ => None,
             })
             .collect();
         Manifest { dir, entries }
     }
 
     fn save(&self) -> std::io::Result<()> {
-        let mut s = String::new();
-        for e in &self.entries {
-            s += &match e {
-                Entry::Saved(n, p) => format!("saved\t{n}\t{}\n", p.display()),
-                Entry::Created(p) => format!("created\t{}\n", p.display()),
-                Entry::Setting(sc, k, v) => match v {
-                    Some(v) => format!("setting\t{sc}\t{k}\t={v}\n"),
-                    None => format!("setting\t{sc}\t{k}\t-\n"),
-                },
-            };
-        }
+        let line = |e: &Entry| match e {
+            Entry::Saved(n, p) => format!("saved\t{n}\t{}\n", p.display()),
+            Entry::Created(p) => format!("created\t{}\n", p.display()),
+            Entry::Setting(s, k, v) => format!("setting\t{s}\t{k}\t{}\n", v.as_ref().map_or("-".into(), |v| format!("={v}"))),
+        };
         std::fs::create_dir_all(&self.dir)?;
-        std::fs::write(self.dir.join("manifest"), s)
+        std::fs::write(self.dir.join("manifest"), self.entries.iter().map(line).collect::<String>())
     }
 
-    fn file(&self, p: &Path) -> Option<&Entry> {
+    fn has_file(&self, p: &Path) -> Option<&Entry> {
         self.entries.iter().find(|e| matches!(e, Entry::Saved(_, q) | Entry::Created(q) if q == p))
     }
 
     /// The file as it was before setup first touched it.
-    fn original(&self, p: &Path) -> Option<Vec<u8>> {
-        match self.file(p) {
+    fn original(&self, p: &Path) -> String {
+        let b = match self.has_file(p) {
             Some(Entry::Saved(n, _)) => std::fs::read(self.dir.join(n.to_string())).ok(),
-            Some(Entry::Created(_)) => None,
-            _ => std::fs::read(p).ok(),
-        }
+            Some(_) => None,
+            None => std::fs::read(p).ok(),
+        };
+        String::from_utf8_lossy(&b.unwrap_or_default()).into_owned()
     }
 
-    fn setting(&self, schema: &str, key: &str) -> Option<&Option<String>> {
+    fn setting(&self, schema: &str, key: &str) -> Option<Option<String>> {
         self.entries.iter().find_map(|e| match e {
-            Entry::Setting(s, k, v) if s == schema && k == key => Some(v),
+            Entry::Setting(s, k, v) if s == schema && k == key => Some(v.clone()),
             _ => None,
         })
-    }
-
-    /// Record a file before its first change.
-    fn keep_file(&mut self, p: &Path) -> std::io::Result<()> {
-        if self.file(p).is_some() {
-            return Ok(());
-        }
-        if p.exists() {
-            let n = self.entries.len();
-            std::fs::create_dir_all(&self.dir)?;
-            std::fs::copy(p, self.dir.join(n.to_string()))?;
-            self.entries.push(Entry::Saved(n, p.into()));
-        } else {
-            self.entries.push(Entry::Created(p.into()));
-        }
-        self.save()
     }
 }
 
@@ -283,40 +204,33 @@ fn ini_get(text: &str, group: &str, key: &str) -> Option<String> {
     for l in text.lines() {
         if l.starts_with('[') {
             inside = l.trim_end() == head;
-        } else if inside {
-            if let Some(v) = l.strip_prefix(key).and_then(|r| r.strip_prefix('=')) {
-                return Some(v.to_string());
-            }
+        } else if let Some(v) = l.strip_prefix(key).and_then(|r| r.strip_prefix('=')).filter(|_| inside) {
+            return Some(v.to_string());
         }
     }
     None
 }
 
 /// Set (Some) or remove (None) a key, leaving every other byte alone. A new
-/// key goes after the group's last line; a new group at the end.
+/// key goes after the group's last line, a new group at the end; a group
+/// left empty goes, with the blank line before it.
 fn ini_set(text: &str, group: &str, key: &str, val: Option<&str>) -> String {
     let head = format!("[{group}]");
-    let lines: Vec<&str> = text.split_inclusive('\n').collect();
-    let start = lines.iter().position(|l| l.trim_end() == head);
-    let Some(start) = start else {
+    let mut out: Vec<String> = text.split_inclusive('\n').map(String::from).collect();
+    let Some(start) = out.iter().position(|l| l.trim_end() == head) else {
         let Some(v) = val else { return text.to_string() };
         let mut s = text.to_string();
-        if !s.is_empty() && !s.ends_with('\n') {
-            s.push('\n');
-        }
-        if !s.is_empty() && !s.ends_with("\n\n") {
-            s.push('\n');
+        if !s.is_empty() {
+            s += if s.ends_with("\n\n") { "" } else if s.ends_with('\n') { "\n" } else { "\n\n" };
         }
         return s + &format!("{head}\n{key}={v}\n");
     };
-    let end = lines[start + 1..].iter().position(|l| l.starts_with('[')).map_or(lines.len(), |i| start + 1 + i);
-    let found = (start + 1..end).find(|&i| lines[i].strip_prefix(key).is_some_and(|r| r.starts_with('=')));
-    let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+    let end = out[start + 1..].iter().position(|l| l.starts_with('[')).map_or(out.len(), |i| start + 1 + i);
+    let found = (start + 1..end).find(|&i| out[i].strip_prefix(key).is_some_and(|r| r.starts_with('=')));
     match (found, val) {
         (Some(i), Some(v)) => out[i] = format!("{key}={v}\n"),
         (Some(i), None) => {
             out.remove(i);
-            // a group left empty goes too, with the blank line before it
             if out[start + 1..end - 1].iter().all(|l| l.trim().is_empty()) {
                 let from = if start > 0 && out[start - 1].trim().is_empty() { start - 1 } else { start };
                 out.drain(from..end - 1);
@@ -340,7 +254,7 @@ fn ini_set(text: &str, group: &str, key: &str, val: Option<&str>) -> String {
 // ------------------------------------------------------------------ the plan
 
 enum Change {
-    File { path: PathBuf, new: Option<Vec<u8>>, mode: u32 },
+    File(PathBuf, Vec<u8>),
     /// a GNOME setting: schema, key, value (None = reset to default)
     Setting(String, String, Option<String>),
 }
@@ -350,307 +264,106 @@ struct Plan {
     changes: Vec<Change>,
     warnings: Vec<String>,
     notes: Vec<String>,
-    paste: Option<(String, String)>,
 }
 
 impl Plan {
-    fn file(&mut self, path: PathBuf, new: Vec<u8>, mode: u32) {
+    fn file(&mut self, path: PathBuf, new: impl Into<Vec<u8>>) {
+        let new = new.into();
         if std::fs::read(&path).ok().as_ref() != Some(&new) {
-            self.changes.push(Change::File { path, new: Some(new), mode });
+            self.changes.push(Change::File(path, new));
+        }
+    }
+
+    fn warn_early(&mut self, what: &str, secs: u32, start: u32, fix: &str) {
+        if secs <= start * 60 {
+            let t = if secs % 60 == 0 { format!("{} min", secs / 60) } else { format!("{secs} s") };
+            self.warnings.push(format!("{what} after {t}, before the screensaver starts ({fix})."));
         }
     }
 }
 
-fn exe_path(dirs: &Dirs) -> (PathBuf, PathBuf) {
-    let exe = std::env::current_exe().unwrap_or_default();
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    let in_path = exe.parent().is_some_and(|d| std::env::split_paths(&path).any(|p| p == d));
-    let bin = if in_path { exe.clone() } else { dirs.home.join(".local/bin/glyphwave") };
-    (exe, bin)
-}
-
-/// A path in a command line read by KDE (QProcess::splitCommand) or a
-/// .desktop Exec line: double quotes when it needs them.
+/// A command line for KDE (QProcess::splitCommand) or a .desktop Exec line.
 fn cmdline(bin: &Path, args: &str) -> String {
     let b = bin.display().to_string();
-    if b.contains([' ', '"', '\'', '\\']) {
-        format!("\"{}\" {args}", b.replace('\\', "\\\\").replace('"', "\\\""))
-    } else {
-        format!("{b} {args}")
-    }
+    if b.contains(' ') { format!("\"{b}\" {args}") } else { format!("{b} {args}") }
 }
 
-const KDE_OWNED: [(&str, &str); 6] = [
-    ("RunScript", "IdleTimeoutCommand"),
-    ("RunScript", "RunScriptIdleTimeoutSec"),
-    ("Display", "TurnOffDisplayWhenIdle"),
-    ("Display", "TurnOffDisplayIdleTimeoutSec"),
-    ("SuspendAndShutdown", "AutoSuspendAction"),
-    ("SuspendAndShutdown", "AutoSuspendIdleTimeoutSec"),
+/// The keys setup owns in each powerdevilrc profile, and Plasma 6's
+/// defaults for the ones it warns about (AC, battery), used when a key is
+/// missing: (group, key that switches it off, its off value, timeout key, AC, battery, what).
+const KDE_TIMERS: [(&str, &str, &str, &str, u32, u32, &str); 3] = [
+    ("Display", "DimDisplayWhenIdle", "false", "DimDisplayIdleTimeoutSec", 300, 120, "KDE dims the screen"),
+    ("Display", "TurnOffDisplayWhenIdle", "false", "TurnOffDisplayIdleTimeoutSec", 600, 300, "KDE turns the screen off"),
+    ("SuspendAndShutdown", "AutoSuspendAction", "0", "AutoSuspendIdleTimeoutSec", 900, 600, "KDE sleeps"),
 ];
 
-/// powerdevilrc's AutoSuspendAction for sleep (PowerButtonAction::Sleep)
-const KDE_SLEEP: &str = "1";
-
-fn text_of(b: Option<Vec<u8>>) -> String {
-    b.map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default()
+/// Edit a KConfig file: our keys back to their pre-setup values first, so a
+/// re-run with other answers leaves nothing behind, then `f` sets the new ones.
+fn kconfig(p: &mut Plan, m: &Manifest, path: PathBuf, owned: &[(String, &str)], f: impl FnOnce(String) -> String) -> String {
+    let orig = m.original(&path);
+    let cur = std::fs::read_to_string(&path).unwrap_or_default();
+    let t = f(owned.iter().fold(cur.clone(), |t, (g, k)| ini_set(&t, g, k, ini_get(&orig, g, k).as_deref())));
+    if t != cur {
+        p.file(path, t.clone());
+    }
+    t
 }
 
-/// Our keys back to their pre-setup values, so a re-run with other answers
-/// leaves nothing behind.
-fn revert(cur: &str, orig: &str, keys: &[(String, String)]) -> String {
-    keys.iter().fold(cur.to_string(), |t, (g, k)| ini_set(&t, g, k, ini_get(orig, g, k).as_deref()))
-}
-
-fn plan_kde(p: &mut Plan, m: &Manifest, dirs: &Dirs, cfg: &mut Config, bin: &Path, ask_profile: bool) {
-    let rc = dirs.config.join("powerdevilrc");
-    let orig = text_of(m.original(&rc));
-    let cur = text_of(std::fs::read(&rc).ok());
-    let owned: Vec<(String, String)> = ["AC", "Battery"]
-        .iter()
-        .flat_map(|prof| KDE_OWNED.iter().map(move |(g, k)| (format!("{prof}][{g}"), k.to_string())))
-        .collect();
-    let mut t = revert(&cur, &orig, &owned);
+fn plan_kde(p: &mut Plan, m: &Manifest, cfg: &Config, bin: &Path) {
     let mut profiles = vec![("AC", cfg.ac)];
     if cfg.on_battery {
         profiles.push(("Battery", cfg.bat()));
     }
-    let launch = cmdline(bin, "launch");
-    let mut lock_at = None::<u32>;
-    for &(prof, tm) in &profiles {
-        let g = |s: &str| format!("{prof}][{s}");
-        let later = ((tm.start + tm.after) * 60).to_string();
-        t = ini_set(&t, &g("RunScript"), "IdleTimeoutCommand", Some(&launch));
-        t = ini_set(&t, &g("RunScript"), "RunScriptIdleTimeoutSec", Some(&(tm.start * 60).to_string()));
-        match tm.then {
-            Then::ScreenOff => {
-                t = ini_set(&t, &g("Display"), "TurnOffDisplayWhenIdle", Some("true"));
-                t = ini_set(&t, &g("Display"), "TurnOffDisplayIdleTimeoutSec", Some(&later));
-            }
-            Then::Sleep => {
-                t = ini_set(&t, &g("SuspendAndShutdown"), "AutoSuspendAction", Some(KDE_SLEEP));
-                t = ini_set(&t, &g("SuspendAndShutdown"), "AutoSuspendIdleTimeoutSec", Some(&later));
-            }
-            Then::Lock => {
-                let at = tm.start + tm.after;
-                if lock_at.is_some_and(|l| l != at) {
-                    p.notes.push("KDE has one lock timer for both power states; the plugged-in time is used.".into());
+    let mut owned = Vec::new();
+    for prof in ["AC", "Battery"] {
+        owned.push((format!("{prof}][RunScript"), "IdleTimeoutCommand"));
+        owned.push((format!("{prof}][RunScript"), "RunScriptIdleTimeoutSec"));
+        owned.extend(KDE_TIMERS[1..].iter().flat_map(|r| [(format!("{prof}][{}", r.0), r.1), (format!("{prof}][{}", r.0), r.3)]));
+    }
+    let t = kconfig(p, m, config::dir().join("powerdevilrc"), &owned, |mut t| {
+        for (prof, tm) in &profiles {
+            let later = ((tm.start + tm.after) * 60).to_string();
+            let mut set = |g: &str, k: &str, v: &str| t = ini_set(&t, &format!("{prof}][{g}"), k, Some(v));
+            set("RunScript", "IdleTimeoutCommand", &cmdline(bin, "launch"));
+            set("RunScript", "RunScriptIdleTimeoutSec", &(tm.start * 60).to_string());
+            match tm.then {
+                Then::ScreenOff => {
+                    set("Display", "TurnOffDisplayWhenIdle", "true");
+                    set("Display", "TurnOffDisplayIdleTimeoutSec", &later);
                 }
-                lock_at.get_or_insert(at);
-            }
-            Then::Nothing => {}
-        }
-        // Timers that would fire before (or with) the screensaver. Plasma 6's
-        // defaults for a laptop/desktop apply when a key isn't in the file.
-        let get = |grp: &str, k: &str| ini_get(&t, &g(grp), k);
-        let on = |grp: &str, k: &str| get(grp, k).is_none_or(|v| v == "true");
-        let secs = |grp: &str, k: &str, ac: u32, bat: u32| {
-            get(grp, k).and_then(|v| v.parse().ok()).unwrap_or(if prof == "AC" { ac } else { bat })
-        };
-        let early = |s: u32| s <= tm.start * 60;
-        let power = if prof == "AC" { "plugged in" } else { "on battery" };
-        let dim = secs("Display", "DimDisplayIdleTimeoutSec", 300, 120);
-        if on("Display", "DimDisplayWhenIdle") && early(dim) {
-            p.warnings.push(format!(
-                "KDE dims the screen after {} {power}, before the screensaver starts \
-                 (System Settings > Power Management > Dim automatically).",
-                min_s(dim)
-            ));
-        }
-        let off = secs("Display", "TurnOffDisplayIdleTimeoutSec", 600, 300);
-        if on("Display", "TurnOffDisplayWhenIdle") && early(off) {
-            p.warnings.push(format!(
-                "KDE turns the screen off after {} {power}, before the screensaver starts \
-                 (Power Management > Turn off screen), or choose then = screen-off.",
-                min_s(off)
-            ));
-        }
-        let sus = secs("SuspendAndShutdown", "AutoSuspendIdleTimeoutSec", 900, 600);
-        if get("SuspendAndShutdown", "AutoSuspendAction").is_none_or(|v| v != "0") && early(sus) {
-            p.warnings.push(format!(
-                "KDE sleeps after {} {power}, before the screensaver starts \
-                 (Power Management > When inactive), or choose then = sleep.",
-                min_s(sus)
-            ));
-        }
-    }
-    if cur.as_bytes() != t.as_bytes() {
-        let mode = if rc.exists() { file_mode(&rc) } else { 0o600 };
-        p.changes.push(Change::File { path: rc, new: Some(t.into_bytes()), mode });
-    }
-
-    // the lock timer is kscreenlocker's, in minutes, for both power states
-    let lrc = dirs.config.join("kscreenlockerrc");
-    let orig = text_of(m.original(&lrc));
-    let cur = text_of(std::fs::read(&lrc).ok());
-    let owned = [("Daemon".to_string(), "Autolock".to_string()), ("Daemon".to_string(), "Timeout".to_string())];
-    let mut t = revert(&cur, &orig, &owned);
-    if let Some(at) = lock_at {
-        t = ini_set(&t, "Daemon", "Autolock", Some("true"));
-        t = ini_set(&t, "Daemon", "Timeout", Some(&at.to_string()));
-    } else {
-        let first = profiles.iter().map(|(_, t)| t.start).min().unwrap_or(cfg.ac.start);
-        let auto = ini_get(&t, "Daemon", "Autolock").is_none_or(|v| v == "true");
-        let after: u32 = ini_get(&t, "Daemon", "Timeout").and_then(|v| v.parse().ok()).unwrap_or(5);
-        if auto && after <= first {
-            p.warnings.push(format!(
-                "KDE locks the screen after {after} min, before the screensaver starts, and that ends it \
-                 (System Settings > Screen Locking), or choose then = lock."
-            ));
-        }
-    }
-    if cur.as_bytes() != t.as_bytes() {
-        let mode = if lrc.exists() { file_mode(&lrc) } else { 0o600 };
-        p.changes.push(Change::File { path: lrc, new: Some(t.into_bytes()), mode });
-    }
-
-    // a black, borderless Konsole profile, when Konsole is the terminal
-    let k = dirs.data.join("konsole");
-    let files = [(k.join("Glyphwave.profile"), KONSOLE_PROFILE), (k.join("GlyphwaveBlack.colorscheme"), KONSOLE_COLORS)];
-    let konsole = launch::terminal(cfg).as_deref() == Some("konsole");
-    if konsole && ask_profile {
-        cfg.kde_black_profile = ask_yes("Konsole opens the screensaver. Add a black, borderless Konsole profile for it?", cfg.kde_black_profile);
-    }
-    if konsole && cfg.kde_black_profile {
-        for (f, text) in files {
-            p.file(f, text.as_bytes().to_vec(), 0o644);
-        }
-        cfg.konsole_profile.get_or_insert("Glyphwave".into());
-    } else {
-        // answered no this time: take back the profile an earlier run added
-        for (f, _) in files {
-            if matches!(m.file(&f), Some(Entry::Created(_))) && f.exists() {
-                p.changes.push(Change::File { path: f, new: None, mode: 0 });
+                Then::Sleep => {
+                    set("SuspendAndShutdown", "AutoSuspendAction", "1"); // PowerButtonAction::Sleep
+                    set("SuspendAndShutdown", "AutoSuspendIdleTimeoutSec", &later);
+                }
+                _ => {}
             }
         }
-        if cfg.konsole_profile.as_deref() == Some("Glyphwave") {
-            cfg.konsole_profile = None;
+        t
+    });
+    for (prof, tm) in &profiles {
+        for (g, sw, off, key, ac, bat, what) in KDE_TIMERS {
+            let g = format!("{prof}][{g}");
+            if ini_get(&t, &g, sw).as_deref() != Some(off) {
+                let secs = ini_get(&t, &g, key).and_then(|v| v.parse().ok()).unwrap_or(if *prof == "AC" { ac } else { bat });
+                p.warn_early(&format!("{what} ({prof})"), secs, tm.start, "System Settings > Power Management");
+            }
         }
+    }
+    // the lock timer is kscreenlocker's, in minutes, one for both power states
+    let lock = (cfg.ac.then == Then::Lock).then_some(cfg.ac.start + cfg.ac.after);
+    let owned = [("Daemon".to_string(), "Autolock"), ("Daemon".to_string(), "Timeout")];
+    let t = kconfig(p, m, config::dir().join("kscreenlockerrc"), &owned, |t| match lock {
+        Some(at) => ini_set(&ini_set(&t, "Daemon", "Autolock", Some("true")), "Daemon", "Timeout", Some(&at.to_string())),
+        None => t,
+    });
+    if ini_get(&t, "Daemon", "Autolock").as_deref() != Some("false") {
+        let mins: u32 = ini_get(&t, "Daemon", "Timeout").and_then(|v| v.parse().ok()).unwrap_or(5);
+        let first = profiles.iter().map(|(_, t)| t.start).min().unwrap_or(5);
+        p.warn_early("KDE locks the screen, which ends it,", mins * 60, first, "System Settings > Screen Locking, or then = lock");
     }
 }
 
-fn min_s(s: u32) -> String {
-    if s % 60 == 0 { format!("{} min", s / 60) } else { format!("{s} s") }
-}
-
-fn file_mode(p: &Path) -> u32 {
-    std::fs::metadata(p).map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()) & 0o7777).unwrap_or(0o644)
-}
-
-const KONSOLE_PROFILE: &str = "\
-[Appearance]
-ColorScheme=GlyphwaveBlack
-
-[General]
-Name=Glyphwave
-Parent=FALLBACK/
-ShowTerminalSizeHint=false
-TerminalMargin=0
-
-[Scrolling]
-HistoryMode=0
-ScrollBarPosition=2
-";
-
-const KONSOLE_COLORS: &str = "\
-[General]
-Description=Glyphwave Black
-Opacity=1
-Blur=false
-
-[Background]
-Color=0,0,0
-
-[BackgroundIntense]
-Color=0,0,0
-
-[BackgroundFaint]
-Color=0,0,0
-
-[Foreground]
-Color=252,252,252
-
-[ForegroundIntense]
-Color=255,255,255
-
-[ForegroundFaint]
-Color=239,240,241
-
-[Color0]
-Color=35,38,39
-
-[Color0Intense]
-Color=127,140,141
-
-[Color0Faint]
-Color=49,54,59
-
-[Color1]
-Color=237,21,21
-
-[Color1Intense]
-Color=192,57,43
-
-[Color1Faint]
-Color=120,50,40
-
-[Color2]
-Color=17,209,22
-
-[Color2Intense]
-Color=28,220,154
-
-[Color2Faint]
-Color=23,162,98
-
-[Color3]
-Color=246,116,0
-
-[Color3Intense]
-Color=253,188,75
-
-[Color3Faint]
-Color=182,86,25
-
-[Color4]
-Color=29,153,243
-
-[Color4Intense]
-Color=61,174,233
-
-[Color4Faint]
-Color=27,102,143
-
-[Color5]
-Color=155,89,182
-
-[Color5Intense]
-Color=142,68,173
-
-[Color5Faint]
-Color=97,74,115
-
-[Color6]
-Color=26,188,156
-
-[Color6Intense]
-Color=22,160,133
-
-[Color6Faint]
-Color=24,108,96
-
-[Color7]
-Color=252,252,252
-
-[Color7Intense]
-Color=255,255,255
-
-[Color7Faint]
-Color=99,104,109
-";
-
-// GNOME keys setup may change, with the schema defaults (gsettings-desktop-schemas,
-// gnome-settings-daemon) that apply while a key is unset
+// GNOME keys setup may change, with the schema defaults that apply while unset
 const GS_SESSION: &str = "org.gnome.desktop.session";
 const GS_LOCK: &str = "org.gnome.desktop.screensaver";
 const GS_POWER: &str = "org.gnome.settings-daemon.plugins.power";
@@ -669,252 +382,175 @@ fn run_out(cmd: &str, args: &[&str]) -> Option<String> {
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
 }
 
-/// The value the user set, None while it's at its default (dconf has no entry).
+/// The value the user set; None while it's at its default (no dconf entry).
 fn gs_user(schema: &str, key: &str) -> Option<String> {
-    let path = format!("/{}/{key}", schema.replace('.', "/"));
-    match run_out("dconf", &["read", &path]) {
-        Some(v) if v.is_empty() => None,
-        Some(v) => Some(v),
-        None => gs_get(schema, key), // no dconf tool: treat the value as set
-    }
-}
-
-/// The value in effect, default or not.
-fn gs_get(schema: &str, key: &str) -> Option<String> {
-    run_out("gsettings", &["get", schema, key])
+    run_out("dconf", &["read", &format!("/{}/{key}", schema.replace('.', "/"))]).filter(|v| !v.is_empty())
 }
 
 fn gs_num(v: &str) -> u32 {
     v.rsplit(' ').next().and_then(|n| n.parse().ok()).unwrap_or(0)
 }
 
-fn plan_gnome(p: &mut Plan, m: &Manifest, dirs: &Dirs, cfg: &Config, bin: &Path) {
+fn plan_gnome(p: &mut Plan, m: &Manifest, cfg: &Config, bin: &Path) {
     let entry = format!(
-        "[Desktop Entry]\nType=Application\nName=glyphwave idle watcher\n\
-         Comment=Opens the glyphwave screensaver when the session is idle\n\
-         Exec={}\nOnlyShowIn=GNOME;\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n",
+        "[Desktop Entry]\nType=Application\nName=glyphwave idle watcher\nExec={}\n\
+         OnlyShowIn=GNOME;\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n",
         cmdline(bin, "idle-watch")
     );
-    p.file(dirs.config.join("autostart/glyphwave.desktop"), entry.into_bytes(), 0o644);
+    p.file(config::dir().join("autostart/glyphwave.desktop"), entry);
 
-    // start from the originals, then set what the answers need
-    let mut want: Vec<(&str, &str, Option<String>)> = GNOME_OWNED
-        .iter()
-        .map(|&(s, k, _)| (s, k, m.setting(s, k).cloned().unwrap_or_else(|| gs_user(s, k))))
-        .collect();
-    let mut set = |s: &str, k: &str, v: String| {
-        if let Some(w) = want.iter_mut().find(|w| w.0 == s && w.1 == k) {
-            w.2 = Some(v);
-        }
-    };
-    let mut blank_at = None::<u32>;
+    // start from the originals, then set what the answers need; blank and
+    // lock are one timer for both power states, so they follow plugged-in
+    let mut want: Vec<(&str, &str, Option<String>)> =
+        GNOME_OWNED.iter().map(|&(s, k, _)| (s, k, m.setting(s, k).unwrap_or_else(|| gs_user(s, k)))).collect();
+    let mut set = |k: &str, v: String| want.iter_mut().filter(|w| w.1 == k).for_each(|w| w.2 = Some(v.clone()));
+    let later = |t: Times| (t.start + t.after) * 60;
+    if matches!(cfg.ac.then, Then::Lock | Then::ScreenOff) {
+        set("idle-delay", format!("uint32 {}", later(cfg.ac)));
+    }
+    if cfg.ac.then == Then::Lock {
+        set("lock-enabled", "true".into());
+        set("lock-delay", "uint32 0".into());
+    }
     let mut powers = vec![("ac", cfg.ac)];
     if cfg.on_battery {
         powers.push(("battery", cfg.bat()));
     }
-    for &(pw, tm) in &powers {
-        let later = (tm.start + tm.after) * 60;
-        match tm.then {
-            Then::Lock | Then::ScreenOff => {
-                if blank_at.is_some_and(|b| b != later) {
-                    p.notes.push("GNOME has one blank/lock timer for both power states; the plugged-in time is used.".into());
-                }
-                let b = *blank_at.get_or_insert(later);
-                set(GS_SESSION, "idle-delay", format!("uint32 {b}"));
-                if tm.then == Then::Lock {
-                    set(GS_LOCK, "lock-enabled", "true".into());
-                    set(GS_LOCK, "lock-delay", "uint32 0".into());
-                }
-            }
-            Then::Sleep => {
-                set(GS_POWER, &format!("sleep-inactive-{pw}-timeout"), later.to_string());
-                set(GS_POWER, &format!("sleep-inactive-{pw}-type"), "'suspend'".into());
-            }
-            Then::Nothing => {}
-        }
+    for (pw, t) in powers.iter().filter(|(_, t)| t.then == Then::Sleep) {
+        set(&format!("sleep-inactive-{pw}-timeout"), later(*t).to_string());
+        set(&format!("sleep-inactive-{pw}-type"), "'suspend'".into());
     }
-    if cfg.ac.then == Then::ScreenOff {
-        p.notes.push("GNOME also locks when it blanks the screen, if Screen Lock is on in Settings > Privacy.".into());
-    }
-    for (s, k, v) in &want {
-        let user = gs_user(s, k);
+    let eff = |k: &str| {
+        let w = want.iter().position(|w| w.1 == k).unwrap();
+        want[w].2.clone().unwrap_or(GNOME_OWNED[w].2.to_string())
+    };
+    for (i, (s, k, v)) in want.iter().enumerate() {
         // nothing to write when the default already says the same
-        let same = user.is_none() && v.is_some() && *v == gs_get(s, k);
-        if *v != user && !same {
+        if *v != gs_user(s, k) && !(gs_user(s, k).is_none() && v.as_deref() == Some(GNOME_OWNED[i].2)) {
             p.changes.push(Change::Setting(s.to_string(), k.to_string(), v.clone()));
         }
     }
-    // what will be in effect afterwards
-    let eff = |s: &str, k: &str| {
-        let w = want.iter().find(|w| w.0 == s && w.1 == k)?;
-        w.2.clone().or_else(|| GNOME_OWNED.iter().find(|o| o.0 == s && o.1 == k).map(|o| o.2.to_string()))
-    };
-    let first = powers.iter().map(|(_, t)| t.start * 60).min().unwrap_or(300);
-    if let Some(d) = eff(GS_SESSION, "idle-delay").map(|v| gs_num(&v)).filter(|&d| d > 0 && d <= first) {
-        p.warnings.push(format!(
-            "GNOME blanks the screen after {}, before the screensaver starts, and that ends it \
-             (Settings > Power > Screen Blank), or choose then = lock or screen-off.",
-            min_s(d)
-        ));
+    let first = powers.iter().map(|(_, t)| t.start).min().unwrap_or(5);
+    if gs_num(&eff("idle-delay")) > 0 {
+        p.warn_early("GNOME blanks the screen, which ends it,", gs_num(&eff("idle-delay")), first, "Settings > Power > Screen Blank, or then = lock");
     }
-    for &(pw, tm) in &powers {
-        let ty = eff(GS_POWER, &format!("sleep-inactive-{pw}-type")).unwrap_or_default();
-        let t = eff(GS_POWER, &format!("sleep-inactive-{pw}-timeout")).map_or(0, |v| gs_num(&v));
-        if ty != "'nothing'" && t > 0 && t <= tm.start * 60 {
-            p.warnings.push(format!(
-                "GNOME suspends after {} {}, before the screensaver starts \
-                 (Settings > Power > Automatic Suspend).",
-                min_s(t),
-                if pw == "ac" { "plugged in" } else { "on battery" }
-            ));
+    for (pw, t) in &powers {
+        let secs = gs_num(&eff(&format!("sleep-inactive-{pw}-timeout")));
+        if eff(&format!("sleep-inactive-{pw}-type")) != "'nothing'" && secs > 0 {
+            p.warn_early(&format!("GNOME suspends ({pw})"), secs, t.start, "Settings > Power > Automatic Suspend");
         }
     }
-    p.notes.push("The idle watcher starts now and at each login (~/.config/autostart).".into());
 }
 
-/// Hyprland, sway and X11 read their idle setup from files people write by
-/// hand; setup prints the lines rather than editing them.
-fn plan_paste(p: &mut Plan, d: Desktop, cfg: &Config, bin: &Path) {
-    let b = bin.display();
-    let two = cfg.on_battery && cfg.battery.is_some_and(|x| x.start != cfg.ac.start);
-    let starts: Vec<(u32, String)> = if two {
-        vec![(cfg.ac.start, format!("{b} launch --on-ac")), (cfg.bat().start, format!("{b} launch --on-battery"))]
-    } else {
-        vec![(cfg.ac.start, format!("{b} launch"))]
-    };
-    if cfg.on_battery && cfg.battery.is_some_and(|x| x.then != cfg.ac.then || x.after != cfg.ac.after) {
-        p.notes.push(format!("{} can't tell power states apart, so the later step uses the plugged-in time.", d.name()));
-    }
-    let tm = cfg.ac;
-    let later = tm.start + tm.after;
-    let (file, text) = match d {
+/// Hyprland, sway and X11 keep their idle setup in files people write by
+/// hand; setup prints the lines (plugged-in times; glyphwave itself skips
+/// battery when on_battery = no).
+fn paste(d: Desktop, cfg: &Config, bin: &Path) -> (&'static str, String) {
+    let (b, t) = (bin.display(), cfg.ac);
+    let (start, later) = (t.start * 60, (t.start + t.after) * 60);
+    let stop_lock = |l: &str| format!("{b} launch --stop; {l}");
+    match d {
         Desktop::Hyprland => {
             let l = &cfg.hyprland_locker;
-            let l0 = l.split_whitespace().next().unwrap_or("hyprlock");
-            let mut s = format!(
-                "general {{\n    # close the screensaver first: {l0} isn't on the bus\n    \
-                 lock_cmd = {b} launch --stop; pidof {l0} || {l}\n    before_sleep_cmd = loginctl lock-session\n}}\n"
-            );
-            for (m, c) in &starts {
-                s += &format!("\nlistener {{\n    timeout = {}\n    on-timeout = {c}\n}}\n", m * 60);
-            }
-            let then = match tm.then {
-                Then::Lock => Some(("loginctl lock-session", "")),
-                Then::ScreenOff => Some(("hyprctl dispatch dpms off", "hyprctl dispatch dpms on")),
-                Then::Sleep => Some(("systemctl suspend", "")),
-                Then::Nothing => None,
+            let l0 = l.split_whitespace().next().unwrap_or(l);
+            let then = match t.then {
+                Then::Lock => "loginctl lock-session",
+                Then::ScreenOff => "hyprctl dispatch dpms off\n    on-resume = hyprctl dispatch dpms on",
+                Then::Sleep => "systemctl suspend",
+                Then::Nothing => "",
             };
-            if let Some((on, back)) = then {
-                s += &format!("\nlistener {{\n    timeout = {}\n    on-timeout = {on}\n", later * 60);
-                if !back.is_empty() {
-                    s += &format!("    on-resume = {back}\n");
-                }
-                s += "}\n";
+            let mut s = format!(
+                "general {{\n    lock_cmd = {b} launch --stop; pidof {l0} || {l}\n    before_sleep_cmd = loginctl lock-session\n}}\n\n\
+                 listener {{\n    timeout = {start}\n    on-timeout = {b} launch\n}}\n"
+            );
+            if !then.is_empty() {
+                s += &format!("\nlistener {{\n    timeout = {later}\n    on-timeout = {then}\n}}\n");
             }
-            s += "\n# and in hyprland.conf, for terminals that can't start fullscreen (wezterm):\n\
-                  # windowrulev2 = fullscreen, class:^(glyphwave)$\n";
-            ("~/.config/hypr/hypridle.conf", s)
+            ("~/.config/hypr/hypridle.conf", s + "\n# hyprland.conf, for wezterm: windowrulev2 = fullscreen, class:^(glyphwave)$\n")
         }
         Desktop::Sway => {
-            let l = &cfg.sway_locker;
-            let mut s = "exec swayidle -w \\\n".to_string();
-            for (m, c) in &starts {
-                s += &format!("    timeout {} '{c}' \\\n", m * 60);
-            }
-            match tm.then {
-                Then::Lock => s += &format!("    timeout {} '{b} launch --stop; {l}' \\\n", later * 60),
-                Then::ScreenOff => {
-                    s += &format!("    timeout {} 'swaymsg \"output * power off\"' resume 'swaymsg \"output * power on\"' \\\n", later * 60)
-                }
-                Then::Sleep => s += &format!("    timeout {} 'systemctl suspend' \\\n", later * 60),
-                Then::Nothing => {}
-            }
-            s += &format!("    before-sleep '{b} launch --stop; {l}'\n\n");
-            s += "for_window [app_id=\"glyphwave\"] fullscreen enable\nfor_window [class=\"glyphwave\"] fullscreen enable\n";
+            let then = match t.then {
+                Then::Lock => format!("    timeout {later} '{}' \\\n", stop_lock(&cfg.sway_locker)),
+                Then::ScreenOff => format!("    timeout {later} 'swaymsg \"output * power off\"' resume 'swaymsg \"output * power on\"' \\\n"),
+                Then::Sleep => format!("    timeout {later} 'systemctl suspend' \\\n"),
+                Then::Nothing => String::new(),
+            };
+            let s = format!(
+                "exec swayidle -w \\\n    timeout {start} '{b} launch' \\\n{then}    before-sleep '{}'\n\n\
+                 for_window [app_id=\"glyphwave\"] fullscreen enable\nfor_window [class=\"glyphwave\"] fullscreen enable\n",
+                stop_lock(&cfg.sway_locker)
+            );
             ("~/.config/sway/config", s)
         }
         _ => {
             // xidlehook's timers count from the one before
-            let mut starts = starts;
-            starts.sort();
-            let mut s = "xidlehook \\\n".to_string();
-            let mut prev = 0;
-            for (m, c) in &starts {
-                s += &format!("    --timer {} '{c}' '' \\\n", (m - prev).max(1) * 60);
-                prev = *m;
+            let then = match t.then {
+                Then::Lock => stop_lock(&cfg.x11_locker),
+                Then::ScreenOff => "xset dpms force off".into(),
+                Then::Sleep => "systemctl suspend".into(),
+                Then::Nothing => String::new(),
+            };
+            let mut s = format!("xidlehook --timer {start} '{b} launch' ''");
+            if !then.is_empty() {
+                s += &format!(" \\\n    --timer {} '{then}' ''", later - start);
             }
-            let last = starts.iter().map(|(m, _)| *m).max().unwrap_or(tm.start);
-            let rest = later.saturating_sub(last).max(1) * 60;
-            match tm.then {
-                Then::Lock => s += &format!("    --timer {rest} '{b} launch --stop; {}' ''\n", cfg.x11_locker),
-                Then::ScreenOff => s += &format!("    --timer {rest} 'xset dpms force off' ''\n"),
-                Then::Sleep => s += &format!("    --timer {rest} 'systemctl suspend' ''\n"),
-                Then::Nothing => s = s.trim_end_matches(" \\\n").to_string() + "\n",
-            }
-            ("your session autostart (e.g. ~/.xinitrc or your window manager's config)", s)
+            ("your session autostart (e.g. ~/.xinitrc)", s + "\n")
         }
-    };
-    p.paste = Some((file.to_string(), text));
+    }
 }
 
 // ------------------------------------------------------------------ show, apply, undo
 
-fn describe(c: &Change, dirs: &Dirs) -> String {
+fn describe(c: &Change) -> String {
     match c {
-        Change::File { path, new, .. } => {
+        Change::File(path, new) => {
             let old = std::fs::read(path).ok();
-            let verb = match (&old, new) {
-                (None, _) => "create",
-                (Some(_), None) => "delete",
-                (Some(_), Some(_)) => "change",
-            };
-            let mut s = format!("  {verb} {}", dirs.show(path));
-            let (Some(new), Some(old)) = (new, &old) else {
-                if let Some(n) = new.as_ref().filter(|n| std::str::from_utf8(n).is_err()) {
-                    s += &format!("  (glyphwave itself, {} KB)", n.len() / 1024);
-                }
+            let mut s = format!("  {} {}", if old.is_some() { "change" } else { "create" }, tilde(path));
+            let (Some(old), Ok(new)) = (old, std::str::from_utf8(new)) else {
                 return s;
             };
-            let (o, n) = (String::from_utf8_lossy(old), String::from_utf8_lossy(new));
-            if std::str::from_utf8(new).is_err() {
-                return s + "  (glyphwave itself, a newer copy)";
-            }
             // the settings lines, each with its [group], that differ
             let keyed = |t: &str| {
-                let mut group = String::new();
+                let mut group = "";
                 let mut v = Vec::new();
-                for l in t.lines().map(str::trim_end) {
-                    if l.starts_with('[') {
-                        group = format!("{l} ");
-                    } else if !l.is_empty() && !l.starts_with('#') {
-                        v.push(format!("{group}{l}"));
-                    }
+                for l in t.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')) {
+                    if l.starts_with('[') { group = l } else { v.push(format!("{group} {l}").trim().to_string()) }
                 }
                 v
             };
-            let (ol, nl) = (keyed(&o), keyed(&n));
-            for l in nl.iter().filter(|l| !ol.contains(l)) {
-                s += &format!("\n      + {l}");
-            }
-            for l in ol.iter().filter(|l| !nl.contains(l)) {
-                s += &format!("\n      - {l}");
-            }
+            let (o, n) = (keyed(&String::from_utf8_lossy(&old)), keyed(new));
+            n.iter().filter(|l| !o.contains(l)).for_each(|l| s += &format!("\n      + {l}"));
+            o.iter().filter(|l| !n.contains(l)).for_each(|l| s += &format!("\n      - {l}"));
             s
         }
-        Change::Setting(sch, k, v) => match v {
-            Some(v) => format!("  set GNOME setting {sch} {k} to {v} (was {})", gs_get(sch, k).unwrap_or("?".into())),
-            None => format!("  reset GNOME setting {sch} {k} to its default"),
-        },
+        Change::Setting(sch, k, Some(v)) => format!("  set GNOME setting {sch} {k} to {v}"),
+        Change::Setting(sch, k, None) => format!("  reset GNOME setting {sch} {k} to its default"),
     }
 }
 
 fn apply(c: &Change, m: &mut Manifest) -> std::io::Result<()> {
     match c {
-        Change::File { path, new, mode } => {
-            m.keep_file(path)?;
-            match new {
-                Some(b) => write_file(path, b, *mode),
-                None => remove_file(path),
+        Change::File(p, new) => {
+            if m.has_file(p).is_none() {
+                if p.exists() {
+                    std::fs::create_dir_all(&m.dir)?;
+                    std::fs::copy(p, m.dir.join(m.entries.len().to_string()))?;
+                    m.entries.push(Entry::Saved(m.entries.len(), p.clone()));
+                } else {
+                    m.entries.push(Entry::Created(p.clone()));
+                }
+                m.save()?;
+            }
+            std::fs::create_dir_all(p.parent().unwrap_or(Path::new("/")))?;
+            if p.file_name().is_some_and(|n| n == "glyphwave") {
+                // the binary: beside it, then renamed over, as it may be running
+                use std::os::unix::fs::PermissionsExt;
+                let tmp = p.with_extension("new");
+                std::fs::write(&tmp, new)?;
+                std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
+                std::fs::rename(&tmp, p)
+            } else {
+                std::fs::write(p, new) // in place, so the file keeps its permissions
             }
         }
         Change::Setting(s, k, v) => {
@@ -927,161 +563,92 @@ fn apply(c: &Change, m: &mut Manifest) -> std::io::Result<()> {
     }
 }
 
-fn write_file(p: &Path, b: &[u8], mode: u32) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    if let Some(d) = p.parent() {
-        std::fs::create_dir_all(d)?;
-    }
-    // via a temporary file, so the running binary or a half-written rc file never shows
-    let tmp = p.with_extension("glyphwave-tmp");
-    std::fs::write(&tmp, b)?;
-    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode))?;
-    std::fs::rename(&tmp, p)
-}
-
-fn remove_file(p: &Path) -> std::io::Result<()> {
-    match std::fs::remove_file(p) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-        _ => Ok(()),
-    }
-}
-
 fn gsettings(s: &str, k: &str, v: Option<&str>) -> std::io::Result<()> {
-    let st = match v {
-        Some(v) => Command::new("gsettings").args(["set", s, k, v]).status()?,
-        None => Command::new("gsettings").args(["reset", s, k]).status()?,
+    let mut c = Command::new("gsettings");
+    match v {
+        Some(v) => c.args(["set", s, k, v]),
+        None => c.args(["reset", s, k]),
     };
-    if st.success() { Ok(()) } else { Err(std::io::Error::other(format!("gsettings failed for {s} {k}"))) }
+    if c.status()?.success() { Ok(()) } else { Err(std::io::Error::other(format!("gsettings failed for {s} {k}"))) }
 }
 
 fn kde_reload() {
-    let Ok(c) = zbus::blocking::Connection::session() else {
-        println!("KDE didn't answer; the settings apply at the next login.");
-        return;
-    };
     let pm = "org.kde.Solid.PowerManagement";
-    let ok = c.call_method(Some(pm), "/org/kde/Solid/PowerManagement", Some(pm), "reparseConfiguration", &()).is_ok()
-        && c.call_method(Some(pm), "/org/kde/Solid/PowerManagement", Some(pm), "refreshStatus", &()).is_ok();
-    let ok2 = c
-        .call_method(Some("org.freedesktop.ScreenSaver"), "/ScreenSaver", Some("org.kde.screensaver"), "configure", &())
-        .is_ok();
-    if ok && ok2 {
-        println!("KDE has reloaded its power and lock settings.");
-    } else {
-        println!("KDE didn't answer; the settings apply at the next login.");
-    }
-}
-
-fn start_watcher(bin: &Path) {
-    use std::os::unix::process::CommandExt;
-    launch::stop("idle-watch"); // a re-run picks up the new times
-    let _ = Command::new(bin)
-        .arg("idle-watch")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .process_group(0)
-        .spawn();
+    let ok = zbus::blocking::Connection::session().is_ok_and(|c| {
+        let call = |dest, path, iface, m| c.call_method(Some(dest), path, Some(iface), m, &()).is_ok();
+        call(pm, "/org/kde/Solid/PowerManagement", pm, "reparseConfiguration")
+            && call(pm, "/org/kde/Solid/PowerManagement", pm, "refreshStatus")
+            && call("org.freedesktop.ScreenSaver", "/ScreenSaver", "org.kde.screensaver", "configure")
+    });
+    println!("{}", if ok { "KDE has reloaded its settings." } else { "KDE didn't answer; the settings apply at the next login." });
 }
 
 /// `glyphwave setup [--remove] [--dry-run] [--desktop NAME]`
 pub fn run(args: &[String]) -> i32 {
-    let mut remove = false;
-    let mut dry = false;
-    let mut desktop = None;
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        match a.as_str() {
-            "--remove" => remove = true,
-            "--dry-run" => dry = true,
-            "--desktop" => match it.next().and_then(|d| Desktop::parse(d)) {
-                Some(d) => desktop = Some(d),
-                None => {
-                    eprintln!("glyphwave: --desktop takes kde, gnome, hyprland, sway or x11");
-                    return 2;
-                }
-            },
-            other => {
-                eprintln!("glyphwave: setup doesn't know {other}; it takes --remove, --dry-run, --desktop NAME");
-                return 2;
-            }
-        }
+    let has = |a: &str| args.iter().any(|x| x == a);
+    let desktop = args.iter().position(|a| a == "--desktop").map(|i| args.get(i + 1).and_then(|d| parse_desktop(d)));
+    if desktop == Some(None) || args.iter().any(|a| a.starts_with("--") && !["--remove", "--dry-run", "--desktop"].contains(&a.as_str())) {
+        eprintln!("glyphwave: setup takes --remove, --dry-run, --desktop kde|gnome|hyprland|sway|x11");
+        return 2;
     }
-    if unsafe { libc::geteuid() } == 0 {
-        eprintln!("glyphwave: run setup as yourself, not root; it only changes your home folder.");
+    if unsafe { libc::geteuid() } == 0 || home().as_os_str().is_empty() {
+        eprintln!("glyphwave: run setup as yourself, with HOME set; it only changes your home folder.");
         return 1;
     }
-    let dirs = Dirs::get();
-    if dirs.home.as_os_str().is_empty() {
-        eprintln!("glyphwave: HOME isn't set");
-        return 1;
-    }
-    if remove { undo(&dirs, dry) } else { setup(&dirs, desktop, dry) }
+    if has("--remove") { undo(has("--dry-run")) } else { setup(desktop.flatten(), has("--dry-run")) }
 }
 
-fn setup(dirs: &Dirs, desktop: Option<Desktop>, dry: bool) -> i32 {
-    let Some(d) = desktop.or_else(Desktop::detect) else {
+fn setup(desktop: Option<Desktop>, dry: bool) -> i32 {
+    let Some(d) = desktop.or_else(detect) else {
         eprintln!("glyphwave: can't tell which desktop this is; say it with --desktop kde|gnome|hyprland|sway|x11");
         return 1;
     };
-    println!("Desktop: {}", d.name());
-    let mut m = Manifest::load(dirs.backup());
-    let cfg_path = config::path();
-    let (mut cfg, asked) = match config::load() {
+    println!("Desktop: {}", desktop_name(d));
+    let mut m = Manifest::load();
+    let cfg = match config::load() {
         Some(c) => {
-            println!("Settings from {}: {}", dirs.show(&cfg_path), summary(&c));
-            if ask_yes("Use these?", true) { (c, false) } else { (questions(c), true) }
+            println!("Settings in {}: {}", tilde(&config::path()), summary(&c));
+            if ask("Use these? (n asks again)", "Y/n").to_lowercase() == "n" { questions(c) } else { c }
         }
-        None => (questions(Config::default()), true),
+        None => questions(Config::default()),
     };
 
     let mut p = Plan::default();
-    let (exe, bin) = exe_path(dirs);
-    if exe != bin {
-        match std::fs::read(&exe) {
-            Ok(b) => p.file(bin.clone(), b, 0o755),
-            Err(e) => {
-                eprintln!("glyphwave: can't read {}: {e}", exe.display());
-                return 1;
-            }
-        }
+    p.file(config::path(), cfg.render());
+    // the idle timer needs a lasting path: copy a downloaded binary to ~/.local/bin
+    let exe = std::env::current_exe().unwrap_or_default();
+    let on_path = exe.parent().is_some_and(|d| std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).any(|p| p == d));
+    let bin = if on_path { exe.clone() } else { home().join(".local/bin/glyphwave") };
+    if bin != exe {
+        p.file(bin.clone(), std::fs::read(&exe).unwrap_or_default());
     }
+    let mut pasted = None;
     match d {
-        Desktop::Kde => plan_kde(&mut p, &m, dirs, &mut cfg, &bin, asked),
-        Desktop::Gnome => plan_gnome(&mut p, &m, dirs, &cfg, &bin),
-        _ => plan_paste(&mut p, d, &cfg, &bin),
+        Desktop::Kde => plan_kde(&mut p, &m, &cfg, &bin),
+        Desktop::Gnome => plan_gnome(&mut p, &m, &cfg, &bin),
+        _ => pasted = Some(paste(d, &cfg, &bin)),
     }
-    if [Some(cfg.ac), cfg.on_battery.then(|| cfg.bat())].iter().flatten().any(|t| t.then == Then::Sleep) {
-        p.notes.push(
-            "While music plays, most players and browsers hold off sleep, so the computer \
-             sleeps once the music has stopped."
-                .into(),
-        );
-    }
-    // the config goes first in the list
-    let rendered = cfg.render().into_bytes();
-    if std::fs::read(&cfg_path).ok().as_ref() != Some(&rendered) {
-        p.changes.insert(0, Change::File { path: cfg_path, new: Some(rendered), mode: 0o644 });
+    if [cfg.ac, cfg.bat()].iter().any(|t| t.then == Then::Sleep) {
+        p.notes.push(match d {
+            Desktop::Kde => "Sleep: while music plays, players hold off sleep. When the music stops, KDE restarts the idle count, so sleep comes the full time after the music.",
+            Desktop::Gnome => "Sleep: while music plays, players hold off sleep. When the music stops, GNOME counts from your last input, so if that was long enough ago it sleeps right away.",
+            _ => "Sleep: while music plays, players hold off sleep; the idle daemon decides what happens when it stops.",
+        }.into());
     }
 
     println!();
     for w in &p.warnings {
         println!("Warning: {w}");
     }
-    if !p.warnings.is_empty() {
-        println!();
-    }
     if p.changes.is_empty() {
         println!("Nothing to change.");
     } else {
         println!("Setup will:");
-        for c in &p.changes {
-            println!("{}", describe(c, dirs));
-        }
-        println!("Originals are kept in {} for `glyphwave setup --remove`.", dirs.show(&dirs.backup()));
+        p.changes.iter().for_each(|c| println!("{}", describe(c)));
+        println!("Originals are kept in {} for `glyphwave setup --remove`.", tilde(&m.dir));
         if dry {
-            println!("\n(dry run: nothing written)");
-        } else if !ask_yes("Go ahead?", false) {
+            println!("(dry run: nothing written)");
+        } else if !ask_yes("Go ahead?") {
             println!("Nothing written.");
             return 1;
         }
@@ -1093,74 +660,73 @@ fn setup(dirs: &Dirs, desktop: Option<Desktop>, dry: bool) -> i32 {
                 return 1;
             }
         }
-        match d {
-            Desktop::Kde if !p.changes.is_empty() => kde_reload(),
-            Desktop::Gnome => start_watcher(&bin),
-            _ => {}
+        if d == Desktop::Kde && !p.changes.is_empty() {
+            kde_reload();
+        }
+        if d == Desktop::Gnome {
+            use std::os::unix::process::CommandExt;
+            launch::stop("idle-watch"); // a re-run picks up the new times
+            let null = std::process::Stdio::null;
+            let _ = Command::new(&bin).arg("idle-watch").stdin(null()).stdout(null()).stderr(null()).process_group(0).spawn();
+            println!("The idle watcher runs now and at each login.");
         }
     }
-    if let Some((file, text)) = &p.paste {
-        println!("\n{} needs these lines in {file}:\n\n{text}", d.name());
+    if let Some((file, text)) = pasted {
+        println!("\nAdd these lines to {file}:\n\n{text}");
     }
-    for n in &p.notes {
-        println!("{n}");
-    }
+    p.notes.iter().for_each(|n| println!("{n}"));
     if !launch::installed("parec") {
         println!("For the music visuals, install parec (pulseaudio-utils, or libpulse on Arch).");
     }
-    if !launch::installed("fastfetch") && !launch::installed("neofetch") && cfg.banner.as_deref() == Some("logo") {
+    if cfg.banner.as_deref() == Some("logo") && !launch::installed("fastfetch") && !launch::installed("neofetch") {
         println!("Optional: with fastfetch installed, the banner shows your system's logo.");
     }
     0
 }
 
-fn undo(dirs: &Dirs, dry: bool) -> i32 {
-    let m = Manifest::load(dirs.backup());
+fn undo(dry: bool) -> i32 {
+    let m = Manifest::load();
     if m.entries.is_empty() {
-        println!("Nothing to remove: no setup backup in {}.", dirs.show(&dirs.backup()));
+        println!("Nothing to remove: setup hasn't changed anything.");
         return 0;
     }
     println!("Remove will:");
     for e in &m.entries {
         match e {
-            Entry::Saved(_, p) => println!("  restore {}", dirs.show(p)),
-            Entry::Created(p) => println!("  delete {}", dirs.show(p)),
+            Entry::Saved(_, p) => println!("  restore {}", tilde(p)),
+            Entry::Created(p) => println!("  delete {}", tilde(p)),
             Entry::Setting(s, k, Some(v)) => println!("  set GNOME setting {s} {k} back to {v}"),
             Entry::Setting(s, k, None) => println!("  reset GNOME setting {s} {k} to its default"),
         }
     }
-    println!("  delete {}", dirs.show(&dirs.backup()));
-    if dry {
-        println!("\n(dry run: nothing changed)");
-        return 0;
-    }
-    if !ask_yes("Go ahead?", false) {
+    println!("  delete {}", tilde(&m.dir));
+    if dry || !ask_yes("Go ahead?") {
         println!("Nothing changed.");
-        return 1;
+        return i32::from(!dry);
     }
-    let mut failed = false;
+    let mut ok = true;
     for e in m.entries.iter().rev() {
         let r = match e {
-            Entry::Saved(n, p) => std::fs::copy(m.dir.join(n.to_string()), p).map(|_| ()),
+            Entry::Saved(n, p) => std::fs::copy(m.dir.join(n.to_string()), p).map(drop),
             Entry::Created(p) => {
                 if p.ends_with("autostart/glyphwave.desktop") {
                     launch::stop("idle-watch");
                 }
-                remove_file(p)
+                std::fs::remove_file(p).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) })
             }
             Entry::Setting(s, k, v) => gsettings(s, k, v.as_deref()),
         };
         if let Err(e) = r {
             eprintln!("glyphwave: {e}");
-            failed = true;
+            ok = false;
         }
     }
-    if failed {
-        eprintln!("glyphwave: kept {} so you can retry", dirs.show(&dirs.backup()));
+    if !ok {
+        eprintln!("glyphwave: kept {} so you can retry", tilde(&m.dir));
         return 1;
     }
     let _ = std::fs::remove_dir_all(&m.dir);
-    let _ = std::fs::remove_dir(dirs.config.join("glyphwave")); // only if empty
+    let _ = std::fs::remove_dir(config::dir().join("glyphwave")); // only if empty
     if m.entries.iter().any(|e| matches!(e, Entry::Saved(_, p) | Entry::Created(p) if p.ends_with("powerdevilrc") || p.ends_with("kscreenlockerrc"))) {
         kde_reload();
     }
@@ -1187,24 +753,12 @@ mod tests {
         // a new group at the file's end
         let t = ini_set(RC, "Battery][RunScript", "RunScriptIdleTimeoutSec", Some("120"));
         assert_eq!(t, format!("{RC}\n[Battery][RunScript]\nRunScriptIdleTimeoutSec=120\n"));
-        // set then remove gives back the original bytes
-        let back = ini_set(&ini_set(RC, "AC][Display", "X", Some("1")), "AC][Display", "X", None);
-        assert_eq!(back, RC);
+        // set then remove gives back the original bytes, also for a new group
+        assert_eq!(ini_set(&ini_set(RC, "AC][Display", "X", Some("1")), "AC][Display", "X", None), RC);
+        assert_eq!(ini_set(&t, "Battery][RunScript", "RunScriptIdleTimeoutSec", None), RC);
         assert_eq!(ini_set("", "Daemon", "Timeout", Some("15")), "[Daemon]\nTimeout=15\n");
         // a key that only shares a prefix is a different key
         assert_eq!(ini_get("[A]\nTimeoutSec=1\n", "A", "Timeout"), None);
-    }
-
-    #[test]
-    fn revert_restores_original_keys() {
-        let ours = ini_set(RC, "AC][RunScript", "IdleTimeoutCommand", Some("/glyphwave launch"));
-        let ours = ini_set(&ours, "Battery][RunScript", "IdleTimeoutCommand", Some("/glyphwave launch"));
-        let keys = [
-            ("AC][RunScript".to_string(), "IdleTimeoutCommand".to_string()),
-            ("Battery][RunScript".to_string(), "IdleTimeoutCommand".to_string()),
-        ];
-        let back = revert(&ours, RC, &keys);
-        assert_eq!(back, RC);
     }
 
     #[test]

@@ -25,3 +25,8 @@ timer for both power states.
 The terminal is the first installed of the launcher's list; on Fedora that
 is usually Ptyxis (`ptyxis -s --fullscreen`), or gnome-terminal. glyphwave
 exits when GNOME's lock screen comes up (`org.gnome.ScreenSaver`).
+
+Sleep while music plays: players hold off sleep while they play. When they
+let go, gnome-settings-daemon sets its sleep timer again, counted from your
+last input, so if you've been away longer than the timeout it sleeps right
+away. (An app that holds off idle instead, like a video, restarts the count.)
