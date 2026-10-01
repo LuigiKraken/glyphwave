@@ -352,8 +352,9 @@ fn main() {
     term.restore();
     if cap.missing {
         eprintln!(
-            "glyphwave: parec not found, so no music visuals. It comes with pulseaudio-utils \
-             (Debian, Ubuntu, Fedora) or libpulse (Arch) and works with PipeWire's pulse layer."
+            "glyphwave: neither parec nor pw-record found, so no music visuals. parec comes with \
+             pulseaudio-utils (Debian, Ubuntu) or libpulse (Arch), pw-record with pipewire-utils \
+             (Fedora) or pipewire-bin (Debian, Ubuntu)."
         );
     }
     if o.stats {
