@@ -263,7 +263,8 @@ fn main() {
         // input until the next frame is due
         loop {
             let wait = next_frame.saturating_duration_since(Instant::now());
-            term::poll_input(wait.as_millis() as i32, tty_in, &mut input);
+            // rounded up: poll(0) on the last fraction of a ms would spin
+            term::poll_input(wait.as_millis() as i32 + 1, tty_in, &mut input);
             if !input.is_empty() {
                 let t = start.elapsed().as_secs_f32();
                 // while a call rings every key ends glyphwave, music keys too
