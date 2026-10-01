@@ -4,16 +4,19 @@
 //! PipeWire's native rate, so no resampling. A reader thread keeps the newest samples in a ring; the DSP copies the
 //! window it needs each frame (cava does the same with its input buffer).
 //!
-//! The monitor records the full signal even with the sink muted or at 0 %,
-//! so `watch_sink` follows the default sink's mute and volume (`pactl
-//! subscribe`, re-read on each sink event) and main treats silence by the
-//! knob like a pause.
+//! It records the sink the player's stream plays to, else the default one,
+//! and `watch_sink` follows which that is (`pactl subscribe`, re-read on each
+//! sink, stream or server event): plugging in headphones moves the player to
+//! a new sink, and a stream pinned to some other output never was on the
+//! default. The monitor records the full signal even with the sink muted or
+//! at 0 %, so it follows that sink's mute and volume too, and main treats
+//! silence by the knob like a pause.
 
 use std::io::{BufRead, BufReader, Read};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 pub const RATE: u32 = 48_000;
@@ -47,12 +50,14 @@ impl Ring {
 /// frames to stdout, so one reader serves either.
 const TOOLS: [&str; 2] = ["parec", "pw-record"];
 
-fn command(tool: &str) -> Command {
+/// `sink` is a sink's name; empty leaves the choice to the tool (the default).
+fn command(tool: &str, sink: &str) -> Command {
     let mut c = Command::new(tool);
     if tool == "parec" {
+        let monitor = if sink.is_empty() { "@DEFAULT_MONITOR@".into() } else { format!("{sink}.monitor") };
         c.args([
             "-d",
-            "@DEFAULT_MONITOR@",
+            &monitor,
             "--format=float32le",
             &format!("--rate={RATE}"),
             "--channels=2",
@@ -73,8 +78,11 @@ fn command(tool: &str) -> Command {
             "stream.capture.sink=true",
             "-P",
             "node.name=glyphwave",
-            "-",
         ]);
+        if !sink.is_empty() {
+            c.args(["--target", sink]);
+        }
+        c.arg("-");
     }
     c
 }
@@ -92,6 +100,8 @@ pub struct Capture {
     quick_deaths: u32,
     /// No capture tool is installed or works; said once on exit.
     pub missing: bool,
+    /// The sink the running child records.
+    pub sink: String,
     pub ring: Arc<Mutex<Ring>>,
 }
 
@@ -104,6 +114,7 @@ impl Capture {
             since: Instant::now(),
             quick_deaths: 0,
             missing: false,
+            sink: String::new(),
             ring: Arc::new(Mutex::new(Ring::new())),
         }
     }
@@ -115,7 +126,11 @@ impl Capture {
         }
     }
 
-    pub fn start(&mut self) {
+    /// Record `sink` (see `command`); one recording another sink is stopped.
+    pub fn start(&mut self, sink: &str) {
+        if self.running() && self.sink != sink {
+            self.stop();
+        }
         if self.missing || self.running() {
             return;
         }
@@ -139,7 +154,7 @@ impl Capture {
                 self.missing = true;
                 return;
             };
-            match command(tool).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
+            match command(tool, sink).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
                 Ok(c) => break c,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => self.tool += 1,
                 Err(_) => return,
@@ -173,6 +188,7 @@ impl Capture {
             }
         });
         self.child = Some(child);
+        self.sink = sink.to_string();
         self.since = Instant::now();
     }
 
@@ -217,9 +233,9 @@ fn hushed(mute: &str, volume: &str) -> bool {
     muted || (pcts.peek().is_some() && pcts.all(|p| p == 0))
 }
 
-fn read_hushed() -> bool {
+fn read_hushed(sink: &str) -> bool {
     let out = |a: &str| {
-        pactl(&[a, "@DEFAULT_SINK@"])
+        pactl(&[a, sink])
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
             .unwrap_or_default()
@@ -227,32 +243,94 @@ fn read_hushed() -> bool {
     hushed(&out("get-sink-mute"), &out("get-sink-volume"))
 }
 
-/// Follow the default sink's mute and volume. One `pactl subscribe` sleeps
-/// on its pipe; a sink or server event (the default changing) re-reads the
-/// state, once per burst. Without pactl it just stays false. The thread
-/// lives until the subscription ends, so the child dies with glyphwave.
-pub fn watch_sink() -> Arc<AtomicBool> {
-    let hushed = Arc::new(AtomicBool::new(false));
-    let h = hushed.clone();
+fn pactl_out(args: &[&str]) -> String {
+    pactl(args).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+}
+
+/// `pactl list sinks short` → the name of the sink with index `id`.
+fn sink_name(list: &str, id: &str) -> Option<String> {
+    list.lines().find_map(|l| {
+        let mut f = l.split('\t');
+        (f.next()? == id).then(|| f.next()).flatten().map(str::to_string)
+    })
+}
+
+/// The sink to record and whether it can be heard, kept by `watch_sink`.
+#[derive(Default)]
+pub struct Sink {
+    /// Nothing can be heard: the sink muted, or at 0 %.
+    pub hushed: AtomicBool,
+    /// The sink the player's stream plays to, else the default; empty when
+    /// pactl can't say, and the capture tool picks the default itself.
+    name: Mutex<String>,
+    /// The MPRIS bus name of the player to follow.
+    player: Mutex<String>,
+    /// Held while re-reading, so two reads can't land out of order.
+    reading: Mutex<()>,
+}
+
+impl Sink {
+    pub fn name(&self) -> MutexGuard<'_, String> {
+        self.name.lock().unwrap()
+    }
+
+    fn read(&self) {
+        let _one = self.reading.lock().unwrap();
+        let player = self.player.lock().unwrap().clone();
+        let mut name = crate::ringer::sink_of(&player)
+            .and_then(|id| sink_name(&pactl_out(&["list", "sinks", "short"]), &id))
+            .unwrap_or_else(|| pactl_out(&["get-default-sink"]).trim().to_string());
+        // an old pactl without get-default-sink prints usage to stderr only
+        if name.contains(char::is_whitespace) {
+            name.clear();
+        }
+        let hushed = read_hushed(if name.is_empty() { "@DEFAULT_SINK@" } else { &name });
+        self.hushed.store(hushed, Ordering::Relaxed);
+        *self.name.lock().unwrap() = name;
+    }
+
+    /// Follow `player`'s stream from now on; a change re-reads at once.
+    pub fn follow(self: &Arc<Self>, player: &str) {
+        let mut p = self.player.lock().unwrap();
+        if *p == player {
+            return;
+        }
+        *p = player.to_string();
+        drop(p);
+        let s = self.clone();
+        std::thread::spawn(move || s.read());
+    }
+}
+
+/// Follow which sink to record and its mute and volume. One `pactl
+/// subscribe` sleeps on its pipe; a sink, stream or server event (the
+/// default changing) re-reads, once per burst. Without pactl nothing is
+/// hushed and the capture tool records the default. The thread lives until
+/// the subscription ends, so the child dies with glyphwave.
+pub fn watch_sink() -> Arc<Sink> {
+    let sink = Arc::new(Sink::default());
+    let s = sink.clone();
     std::thread::spawn(move || {
         let Ok(mut child) = die_with_us(&mut pactl(&["subscribe"])).stdout(Stdio::piped()).spawn() else { return };
-        h.store(read_hushed(), Ordering::Relaxed);
+        s.read();
         let mut rd = BufReader::new(child.stdout.take().unwrap());
         let mut line = String::new();
         let mut dirty = false;
         while rd.read_line(&mut line).is_ok_and(|n| n > 0) {
-            // "Event 'change' on sink #56", not sink-input (every stream's own)
-            dirty |= line.contains(" on sink #") || line.contains(" on server");
+            // "Event 'change' on sink #56"; sink-input events are streams
+            // starting, stopping or moving (the source-output ones are ours)
+            dirty |= line.contains(" on sink #") || line.contains(" on sink-input #") || line.contains(" on server");
             line.clear();
             if dirty && rd.buffer().is_empty() {
                 dirty = false;
-                h.store(read_hushed(), Ordering::Relaxed);
+                s.read();
             }
         }
-        h.store(false, Ordering::Relaxed);
+        s.hushed.store(false, Ordering::Relaxed);
+        s.name().clear();
         let _ = child.wait();
     });
-    hushed
+    sink
 }
 
 /// How busy the demo track is, 0 (just the pad) to 6; 4 is the full mix
@@ -350,7 +428,7 @@ pub fn start_synth(ring: Arc<Mutex<Ring>>) {
 
 #[cfg(test)]
 mod tests {
-    use super::hushed;
+    use super::{hushed, sink_name};
 
     const VOL: &str = "Volume: front-left: 42598 /  65% / -11.23 dB,   front-right: 42598 /  65% / -11.23 dB\n        balance 0.00\n";
     const ZERO: &str = "Volume: front-left: 0 /   0% / -inf dB,   front-right: 0 /   0% / -inf dB\n        balance 0.00\n";
@@ -363,5 +441,13 @@ mod tests {
         assert!(!hushed("Mute: no\n", "Volume: front-left: 0 /   0% / -inf dB,   front-right: 655 /   1% / -120.00 dB"));
         // no sink, or pactl failed: not hushed
         assert!(!hushed("", ""));
+    }
+
+    #[test]
+    fn sink_name_by_index() {
+        let list = "52\talsa_output.pci-0000_00_03.0.analog-stereo\tPipeWire\ts16le 2ch 48000Hz\tRUNNING\n123\thdmi\tPipeWire\ts16le 2ch 48000Hz\tIDLE\n";
+        assert_eq!(sink_name(list, "123").as_deref(), Some("hdmi"));
+        assert_eq!(sink_name(list, "5"), None);
+        assert_eq!(sink_name("", "52"), None);
     }
 }

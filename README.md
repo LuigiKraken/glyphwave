@@ -137,7 +137,7 @@ It's written in Rust with four crates:
 [signal-hook](https://crates.io/crates/signal-hook) and
 [libc](https://crates.io/crates/libc). There's no TUI framework: it writes
 the escape codes itself and only sends the cells that changed. Audio comes
-from the default output's monitor. Beats, onsets, drops and section changes
+from the monitor of the output the player plays to. Beats, onsets, drops and section changes
 come from its own small DSP pipeline.
 [docs/how-it-works.md](docs/how-it-works.md) covers the themes, the
 analysis, the configuration and the references. Per-desktop setup details
