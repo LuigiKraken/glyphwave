@@ -144,9 +144,12 @@ impl Canvas {
     #[inline]
     fn put_over(&mut self, i: usize, ch: char, fg: Rgb) {
         let c = &mut self.cells[i];
-        // track titles come from any MPRIS player (a web page, in a browser);
-        // a control character would reach the terminal as an escape sequence
-        c.ch = if ch.is_control() { ' ' } else { ch };
+        // track titles and callers come from any player or chat; a control
+        // character would reach the terminal as an escape sequence, and a
+        // zero-width or bidi format character would hide or reorder the rest
+        let invisible = ch.is_control()
+            || matches!(ch as u32, 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x2069 | 0xFEFF);
+        c.ch = if invisible { ' ' } else { ch };
         c.fg = fg;
     }
 

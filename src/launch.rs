@@ -138,7 +138,7 @@ pub fn launch(args: &[String]) -> i32 {
     // The lock keeps two idle timers from opening two windows. It's inherited
     // by the terminal and released when it exits.
     let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or("/tmp".into());
-    let lock = format!("{dir}/glyphwave-idle.lock\0");
+    let lock = format!("{dir}/glyphwave-idle-{}.lock\0", unsafe { libc::getuid() }); // own even in /tmp
     unsafe {
         let fd = libc::open(lock.as_ptr().cast(), libc::O_RDWR | libc::O_CREAT, 0o600);
         if fd >= 0 && libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) != 0 {
