@@ -111,8 +111,8 @@ fn command(term: &str, cfg: &Config, bin: &str, now: bool) -> Option<Vec<String>
 }
 
 /// `glyphwave launch [--stop] [--now] [--on-ac | --on-battery]`; --now is
-/// the start-now key and menu entry, after which waking it locks at once
-/// when lock_after is set.
+/// the start-now key and menu entry: a visualizer, which never locks when
+/// woken and keeps the desktop from dimming, locking or sleeping meanwhile.
 pub fn launch(args: &[String]) -> i32 {
     let has = |a: &str| args.iter().any(|x| x == a);
     if has("--stop") {
@@ -176,6 +176,67 @@ pub fn lock_session(cfg: &Config, bus_locked: &std::sync::atomic::AtomicBool) {
     while std::time::Instant::now() < until && !bus_locked.load(std::sync::atomic::Ordering::Relaxed) && !locked() {
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+}
+
+/// Holds the desktop's idle timers off for a screensaver started by hand:
+/// org.freedesktop.ScreenSaver (KDE, hypridle), else GNOME's session
+/// manager. Let go on drop, or by the bus when the process dies.
+pub struct Awake(Option<(zbus::blocking::Connection, &'static Inhibitor, u32)>);
+
+/// (service and interface, path, release method)
+type Inhibitor = (&'static str, &'static str, &'static str);
+const INHIBITORS: [Inhibitor; 2] = [
+    ("org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "UnInhibit"),
+    ("org.gnome.SessionManager", "/org/gnome/SessionManager", "Uninhibit"),
+];
+
+/// Best effort: with no inhibitor on the bus nothing changes.
+pub fn keep_awake() -> Awake {
+    if crate::setup::detect() == Some(crate::setup::Desktop::Sway) {
+        sway_inhibit();
+    }
+    const WHY: &str = "music visualizer started by hand";
+    let held = || {
+        let conn = zbus::blocking::Connection::session().ok()?;
+        let call = |i: &'static Inhibitor| {
+            let (n, p, _) = *i;
+            let r = if n == INHIBITORS[0].0 {
+                conn.call_method(Some(n), p, Some(n), "Inhibit", &("glyphwave", WHY))
+            } else {
+                // no window id; 4 | 8: suspend and idle (blank, lock)
+                conn.call_method(Some(n), p, Some(n), "Inhibit", &("glyphwave", 0u32, WHY, 12u32))
+            };
+            r.ok()?.body().deserialize::<u32>().ok().map(|c| (i, c))
+        };
+        let (i, c) = INHIBITORS.iter().find_map(call)?;
+        Some((conn, i, c))
+    };
+    Awake(held())
+}
+
+impl Drop for Awake {
+    fn drop(&mut self) {
+        if let Some((conn, (n, p, un), c)) = &self.0 {
+            let _ = conn.call_method(Some(*n), *p, Some(*n), *un, c);
+        }
+    }
+}
+
+/// swayidle doesn't hear the bus, only Wayland idle inhibitors: sway makes
+/// the window one, gone with it. Retried until the terminal's window is up.
+fn sway_inhibit() {
+    std::thread::spawn(|| {
+        for _ in 0..10 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let set = |c: &str| {
+                let q = format!("[{c}=\"glyphwave\"] inhibit_idle open");
+                Command::new("swaymsg").arg(q).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
+            };
+            if set("app_id") | set("class") {
+                return;
+            }
+        }
+    });
 }
 
 /// `glyphwave idle-watch`, started from ~/.config/autostart on GNOME.

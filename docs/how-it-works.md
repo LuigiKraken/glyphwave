@@ -191,11 +191,9 @@ Konsole profile, if you made one), and the locker for Hyprland, sway and X11.
 from the screensaver's start. A key or the mouse within it closes the
 screensaver onto the desktop; after it, glyphwave locks the session first and
 closes once the lock screen is up (it waits at most 2 s), so you land on the
-lock screen. `0` always locks; `none`, the default, never does. Started with
-the start-now key or the app-menu entry (`glyphwave launch --now`), it locks
-when woken whenever `lock_after` is set. Only waking it counts: when the
-desktop closes it (`launch --stop`, its own lock screen) nothing extra
-happens. A call is no exception: the key you press to answer locks too, past
+lock screen. `0` always locks; `none`, the default, never does. Only waking
+it counts: when the desktop closes it (`launch --stop`, its own lock screen)
+nothing extra happens. A call is no exception: the key you press to answer locks too, past
 the grace period. It's one value for both power states and counts time
 asleep. On KDE and GNOME it locks through logind (`loginctl lock-session`),
 which both lock screens answer; on Hyprland, sway and X11 it runs the
@@ -204,6 +202,22 @@ which both lock screens answer; on Hyprland, sway and X11 it runs the
 screensaver up for longer and still have it lock, pair `lock_after` with
 `then = screen-off` or `none` (and on KDE turn off its own lock timer, which
 setup warns about).
+
+**Starting it by hand.** Started with the start-now key or the app-menu
+entry (`glyphwave launch --now`, which passes `--now` on), it's a music
+visualizer: waking it never locks, whatever `lock_after` says, and while it
+runs it holds off the desktop's own timers with
+`org.freedesktop.ScreenSaver.Inhibit` on the session bus, or, where nothing
+answers that (GNOME), `org.gnome.SessionManager.Inhibit` for idle and suspend. The
+inhibit is let go when it exits, and by the bus if it crashes. On KDE that
+stops the lock timer and PowerDevil's dimming, screen-off and sleep; hypridle
+honours it unless `ignore_dbus_inhibit = true`. swayidle doesn't listen to the
+bus, so on sway glyphwave asks sway to make its window an idle inhibitor
+(`inhibit_idle open`), gone with the window. xidlehook on X11 has neither, so
+its timers still fire during a run started by hand. It keeps the screen on
+until you stop it, which costs battery. Started by the idle timer it holds
+nothing off, so the timers after it work as before. Tested on KDE; GNOME and
+sway are untested.
 
 ## What a system needs
 

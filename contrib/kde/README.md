@@ -71,8 +71,8 @@ timeout after the music stops, not straight away.
 Starting it by hand: a video, or music in some players, holds off the idle
 timer, so the screensaver never starts on its own. Setup writes
 `~/.local/share/applications/glyphwave.desktop` (an app-menu entry you can
-pin to the panel) running `glyphwave launch --now` (woken, it locks at once
-when `lock_after` is set), with `X-KDE-Shortcuts=Meta+Ctrl+L` (`shortcut` in the
+pin to the panel) running `glyphwave launch --now` (a visualizer: waking it never locks, and
+it holds off KDE's lock timer, dimming and sleep until you stop it), with `X-KDE-Shortcuts=Meta+Ctrl+L` (`shortcut` in the
 config). kglobalacceld reads that key when the menu database is rebuilt, so
 setup runs `kbuildsycoca6` and the key works at once, with nothing written
 to `kglobalshortcutsrc`. If that file already gives the key to something

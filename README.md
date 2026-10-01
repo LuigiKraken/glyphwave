@@ -48,9 +48,12 @@ it yourself with Meta+Ctrl+L (next to Meta+L for lock) or from the app menu.
 Coming back to a locked screen: with `lock_after = 10` in the config, waking
 the screensaver within its first 10 minutes takes you back to the desktop,
 and after that to the lock screen. The screensaver keeps running until you
-touch a key either way. `0` always locks, `none` (the default) never does. A
-screensaver you started with Meta+Ctrl+L locks when woken whenever
-`lock_after` is set, since you started it to walk away.
+touch a key either way. `0` always locks, `none` (the default) never does.
+
+Started with Meta+Ctrl+L or from the app menu, it's a music visualizer: waking
+it never locks, whatever `lock_after` says, and the desktop doesn't dim, lock
+or sleep while it runs. It keeps the screen on until you stop it, which costs
+battery.
 
 ## What it does
 
