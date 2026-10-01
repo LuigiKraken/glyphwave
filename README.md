@@ -101,8 +101,25 @@ means the text and the music share one screen, one palette and one clock.
   track plays, the top-left corner shows its title, artist · album, and
   progress with the length. When playback pauses or stops, the corner stays
   empty.
-- Pausing, or 4 s of silence, ends the themed cycle with its outro, and the idle
-  cycle takes over.
+- Pausing, muting, turning the volume to 0 %, or 4 s of silence ends the
+  themed cycle with its outro, and the idle cycle takes over. (The capture
+  records the sound before the system volume is applied, so glyphwave watches
+  the output's mute and volume itself.)
+- **Calls.** When someone calls on Slack, Discord, Teams, WhatsApp and similar
+  apps, the screen fades to a small icon for the app and a card saying who's
+  calling, read from the desktop's call notification. You answer in the app
+  itself: while a call rings, every key (the music keys too) and the mouse
+  end the screensaver.
+- **The banner** is your system's logo (whatever fastfetch or neofetch
+  shows, in glyphwave's colours), your machine's name in big block letters,
+  or your own art in `~/.config/glyphwave/banner.txt`. It uses your own art
+  if it's there, else the logo, else the name; `--banner logo|name|FILE`
+  picks one, and `l` cycles through them. Art too big for the screen steps
+  down to the name.
+- **A test mode.** `glyphwave --test` runs the demo track in the current
+  terminal with the debug line. `1`–`0` jump to a theme (through the normal
+  fade), `d`/`t`/`s`/`w` fake a Discord, Teams, Slack or WhatsApp call, `m`
+  fakes mute, space fakes pause, and `[`/`]` make the track calmer or louder.
 
 ## The stack
 
@@ -118,70 +135,58 @@ means the text and the music share one screen, one palette and one clock.
   synchronized-output markers so frames don't tear. 24-bit colour, with a
   256-colour fallback for terminals without it. Colours are mixed in OKLab
   so gradients stay even.
-- **Audio** comes from `parec` recording the default output's monitor, so it
-  sees whatever the machine plays. That works on PipeWire and PulseAudio
-  alike.
+- **Audio** comes from `parec` (or `pw-record` where `parec` isn't
+  installed) recording the default output's monitor, so it sees whatever the
+  machine plays. That works on PipeWire and PulseAudio alike.
 - **Now playing** comes from MPRIS on the session bus, which Spotify,
   browsers and most Linux players speak. Nothing is polled: the bus signals
   when something changes.
-- **The banner** is any plain-text file. Every non-space character becomes
-  one letter the effects can move and colour.
-- **Starting it** is left to the desktop's idle daemon. `contrib/` has a
-  small launcher and recipes for Hyprland, sway, X11 window managers and
-  KDE.
+- **Calls** come from watching the desktop's notifications on the session
+  bus. glyphwave only listens; it never answers or dismisses anything.
+- **The banner** is plain text. Every non-space character becomes one letter
+  the effects can move and colour. The logo comes from running fastfetch or
+  neofetch once, with their colours stripped; the big letters are a font
+  built into the binary.
+- **Starting it** is left to the desktop's own idle timer. `glyphwave setup`
+  hooks into it, and `glyphwave launch` opens the screensaver fullscreen in a
+  terminal. `contrib/` has the same recipes by hand for KDE, GNOME,
+  Hyprland, sway and X11.
+- **One file.** Releases are a static binary (musl, x86_64 and ARM64), so it
+  needs no Rust and no extra libraries.
 
 ## Status
 
 It runs daily as the screensaver on the laptop it was written for. Not
-released yet. Planned before the first release:
+released yet. Left before the first release:
 
-- **Calls.** When someone calls on Slack, Discord, Teams and similar apps,
-  the screensaver shows who's calling, read from the desktop's call
-  notification. You answer in the app itself: while a call rings, every key
-  (the music keys too) and the mouse end the screensaver.
-- **Three kinds of banner.** Your system's logo, taken from fastfetch or
-  neofetch; your machine's name in big block letters; or your own art. By
-  default it uses the logo if you have one of those tools, otherwise the
-  name. For your own art, save it as `~/.config/glyphwave/banner.txt` and
-  that's it.
-- **Muted counts as paused.** With the output muted or at 0 %, the
-  visualizer stops as if the music were paused. Today it keeps dancing,
-  because the capture records the sound before the system volume is applied.
-- **A test mode.** One command that runs glyphwave in the current terminal
-  with keys for trying things out: the number keys jump to a theme (with the
-  normal fade between themes), `d`/`t`/`s` fake an incoming Discord, Teams
-  or Slack call, and further keys fake mute, pause and a quiet or loud track.
-- **Download and run.** One self-contained Linux binary, built for each
-  release, so nobody needs Rust. It will be tested in the common terminals
-  and desktops, and on the common distros, Fedora (GNOME and KDE) included.
-- **`glyphwave setup`.** One step after installing, which asks:
-  - after how many idle minutes the screensaver starts;
-  - what happens after it has run a while: lock, screen off, sleep, or keep
-    running;
-  - whether it runs only when plugged in, or on battery too;
-  - which banner to use.
-
-  It uses your desktop's own idle settings (KDE, GNOME, Hyprland, sway, X11)
-  rather than running its own timer. It never needs root and never
-  installs packages. It only writes to your home folder, shows every file
-  before changing it, and `glyphwave setup --remove` puts everything back.
-  Anything a distro still needs is listed here, per distro.
-- **One config file.** Setup saves its answers to
-  `~/.config/glyphwave/config`. The top holds the general settings everyone
-  needs. Below it are optional sections for the detail, such as which
-  terminal to use or different settings per desktop or for battery.
+- **Real calls.** Call detection is tested with test notifications only.
+  Whether Slack, Discord, Teams and WhatsApp send a call notification glyphwave
+  recognises still needs a real call on each.
 - **A recording at the top of this README,** so you can see it move before
   reading anything.
+- **A first look on GNOME and Fedora.** The GNOME idle watcher, the Ptyxis and
+  GNOME Terminal launch, and the ARM64 binary have been built but not yet run
+  on a real system.
 
-Once released, getting it running will look like this:
+## Getting it running
 
 1. **Download.** Paste one line into a terminal. It puts a single file in
-   your home folder, with no compiling and no password.
+   `~/.local/bin`, with no compiling and no password:
+
+   ```sh
+   curl -fsSL https://github.com/LuigiKraken/glyphwave/releases/latest/download/install.sh | sh
+   ```
+
 2. **Try it.** Type `glyphwave`. It plays right there in the terminal,
-   dancing if music is on. `q` quits.
+   dancing if music is on. `q` quits. `glyphwave --test` gives you keys to
+   try every theme and a fake call.
 3. **Set it up.** Type `glyphwave setup`. It works out your desktop and asks
-   four questions, each with a default: when to start, what comes after,
-   battery or not, and which banner.
+   four questions, each with a default:
+   - after how many idle minutes the screensaver starts;
+   - what happens after it has run a while: lock, screen off, sleep, or keep
+     running;
+   - whether it runs only when plugged in, or on battery too;
+   - which banner to use.
 4. **Confirm.** Setup lists exactly which files it will write or change, and
    does nothing until you say yes.
 5. **Done.** From then on it fades in when you're away and goes away when
@@ -189,18 +194,54 @@ Once released, getting it running will look like this:
    waking it, calls show who's calling, and your computer locks or sleeps
    when you chose.
 
-To change your answers, run `glyphwave setup` again. To remove it, run
-`glyphwave setup --remove` and then delete the one downloaded file.
+Setup uses your desktop's own idle settings (KDE, GNOME, Hyprland, sway, X11)
+rather than running its own timer. On KDE and GNOME it changes them for you;
+on Hyprland, sway and X11 it prints the lines to paste. GNOME has no hook for
+this, so setup adds a small autostart entry that runs `glyphwave idle-watch`.
+Music keeps the computer awake the way it always does: players hold off
+sleep while they play, and the desktop's sleep timer takes over once the
+music stops.
+
+It never needs root and never installs packages. It only writes to your home
+folder, keeps the originals, and `glyphwave setup --remove` puts everything
+back. To change your answers, edit `~/.config/glyphwave/config` or run
+`glyphwave setup` again. To remove glyphwave, run `glyphwave setup --remove`
+and delete `~/.local/bin/glyphwave`.
+
+**The config file** has the general settings at the top (`start_after`,
+`then`, `then_after`, `on_battery`, `banner`, `fps`) and optional sections
+below, commented out: shorter times on battery, which terminal to open (and a
+Konsole profile, if you made one), and the locker for Hyprland, sway and X11.
+
+**What a system needs:**
+- a terminal; `glyphwave launch` finds kitty, foot, Alacritty, Ghostty,
+  WezTerm, Konsole, Ptyxis, GNOME Terminal or xterm;
+- `parec` or `pw-record`, for the music. PipeWire systems have `pw-record`
+  (Fedora: `pipewire-utils`, installed by default); `parec` is in
+  `pulseaudio-utils`;
+- a font with block characters, which every common terminal font has. On the
+  bare Linux console it swaps in the few glyphs its fonts have;
+- optionally fastfetch or neofetch, for the logo banner.
+
+Fedora Workstation (GNOME) and the KDE spin should need nothing extra; that
+is still to be tried on a real Fedora install. The binary in `~/.local/bin`
+also suits Silverblue and the other Atomic variants, where `/usr` is
+read-only.
 
 ## How it works
 
 | File | What |
 |---|---|
-| `audio.rs` | `parec` from `@DEFAULT_MONITOR@`, float32 stereo at 48 kHz, into a ring buffer; plus the synthetic demo track |
+| `audio.rs` | `parec` (or `pw-record`) from the default output's monitor, float32 stereo at 48 kHz, into a ring buffer; the output's mute and volume; plus the synthetic demo track |
 | `dsp.rs` | spectrum, onsets, tempo, beat phase, loudness, drop and section detection |
 | `mpris.rs` | now playing (zbus), plus the KDE/GNOME locker check in screensaver mode; re-read only on bus signals |
 | `canvas.rs` | cell buffer with half-block pixels and braille dots; the diffed output |
-| `fx/*` | banner cycle, text effects, music themes, bar floor, music ribbon, idle stars / rain, player label |
+| `calls.rs` | incoming calls, read passively from the desktop's notifications |
+| `art.rs` | the banner sources: fetch-tool logo, built-in block font, own file |
+| `config.rs` | `~/.config/glyphwave/config` |
+| `setup.rs` | `glyphwave setup` and `--remove`, per desktop |
+| `launch.rs` | `glyphwave launch` (the terminal) and `idle-watch` (GNOME) |
+| `fx/*` | banner cycle, text effects, music themes, bar floor, music ribbon, call view, idle stars / rain, player label |
 | `scene.rs` | picks each cycle's theme and says when its hold ends |
 
 ### DSP choices
