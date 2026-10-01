@@ -160,3 +160,56 @@ impl Ribbon {
         }
     }
 }
+
+/// The held bars' resting height (0..1): low, but still a line.
+const REST: f32 = 0.2;
+
+/// What the ribbon is fed. While it's live, the analysis as it is; when it
+/// stops (a mute, a pause, the music gone quiet, the floor theme) the last
+/// bars are held and settle to a low, still line, the beat, kicks and hats
+/// let go, and only then does the ribbon fade. Going live again they rise
+/// from there, so it never jumps either way.
+pub struct Calm {
+    f: crate::dsp::Features,
+    /// How much of the analysis gets through, 0 (held) .. 1 (live).
+    w: f32,
+    /// Seconds since it stopped being live.
+    pub since: f32,
+}
+
+impl Calm {
+    pub fn new() -> Calm {
+        Calm { f: Default::default(), w: 0.0, since: 0.0 }
+    }
+
+    /// Each frame, drawn or not.
+    pub fn feed(&mut self, src: &crate::dsp::Features, dt: f32, live: bool) {
+        // lets go at once (a pause empties the bars faster than the player
+        // says so), takes the music back over a moment
+        self.w = if live { (self.w + dt / 0.6).min(1.0) } else { (self.w - dt / 0.15).max(0.0) };
+        self.since = if live { 0.0 } else { self.since + dt };
+        // the analysis' share each frame, the same at any frame rate
+        let k = 1.0 - (1.0 - self.w).powf(dt * 30.0);
+        let settle = 1.0 - (-dt / 0.3).exp();
+        let f = &mut self.f;
+        for (out, inp) in [(&mut f.left, &src.left), (&mut f.right, &src.right)] {
+            if out.len() != inp.len() {
+                out.clone_from(inp);
+            }
+            for (o, &i) in out.iter_mut().zip(inp) {
+                let held = *o - (*o - o.min(REST)) * settle;
+                *o = held + (i - held) * k;
+            }
+        }
+        let held = f.intensity * (1.0 - settle);
+        f.intensity = held + (src.intensity - held) * k;
+        f.beat = src.beat && self.w > 0.9;
+        f.beat_count = src.beat_count;
+        f.kick_env = src.kick_env * self.w;
+        f.hat = src.hat * self.w;
+    }
+
+    pub fn fed(&self) -> &crate::dsp::Features {
+        &self.f
+    }
+}

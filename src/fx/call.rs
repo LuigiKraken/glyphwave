@@ -293,19 +293,37 @@ fn centred(cv: &mut Canvas, mid: i32, y: i32, parts: &[(&str, Rgb)], room: usize
 const SUB: &str = "incoming call · ";
 const CARD_H: i32 = 7;
 
+/// Where the view goes on a `w`×`h` screen: the icon at full size, at half
+/// size on a small terminal, or not at all (its scale and size in cells),
+/// the gap under it and the top row.
+fn layout(ic: &Icon, w: usize, h: usize) -> (Option<usize>, i32, i32, i32, i32) {
+    let ih = ic.rows.len() / 2;
+    let fits = |s: usize| ic.w() / s + 4 <= w && ih / s + 2 + CARD_H as usize + 2 <= h;
+    let scale = [1, 2].into_iter().find(|&s| fits(s));
+    let (iw, ih) = scale.map_or((0, 0), |s| ((ic.w() / s) as i32, (ih / s) as i32));
+    let gap = if scale.is_some() { 2 } else { 0 };
+    (scale, iw, ih, gap, (h as i32 - ih - gap - CARD_H) / 2)
+}
+
+/// The first row under the card: the ribbon keeps below it.
+pub fn bottom(call: &Call, w: usize, h: usize) -> i32 {
+    let (_, _, ih, gap, top) = layout(icon(&call.app), w, h);
+    top + ih + gap + CARD_H
+}
+
+/// The app's colours along 0..1, drifting like the card's border; the
+/// ribbon wears them while the call is up.
+pub fn hue(call: &Call, u: f32, t: f32) -> Rgb {
+    icon(&call.app).edge(u - t * 0.06)
+}
+
 pub fn draw(cv: &mut Canvas, cx: &Ctx, call: &Call, pulse: &Pulse, a: f32) {
     if cx.w < 24 || cx.h < CARD_H as usize + 2 || a < 0.01 {
         return;
     }
     let ic = icon(&call.app);
     let caller = if call.caller.is_empty() { "—" } else { call.caller.as_str() };
-    // the icon at full size, at half size on a small terminal, or not at all
-    let ih = ic.rows.len() / 2;
-    let fits = |s: usize| ic.w() / s + 4 <= cx.w && ih / s + 2 + CARD_H as usize + 2 <= cx.h;
-    let scale = [1, 2].into_iter().find(|&s| fits(s));
-    let (iw, ih) = scale.map_or((0, 0), |s| ((ic.w() / s) as i32, (ih / s) as i32));
-    let gap = if scale.is_some() { 2 } else { 0 };
-    let top = (cx.h as i32 - ih - gap - CARD_H) / 2;
+    let (scale, iw, ih, gap, top) = layout(ic, cx.w, cx.h);
     let mid = cx.w as i32 / 2;
     let hit = pulse.hit();
 

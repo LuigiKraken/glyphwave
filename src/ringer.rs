@@ -113,8 +113,8 @@ pub const NOTES: [(f32, f32); 4] = [(0.0, 784.0), (0.22, 659.3), (0.6, 784.0), (
 pub const ROUND: f32 = 2.5;
 
 /// One ring of the built-in tone, built on the first call: a soft G5–E5
-/// chime twice, then quiet; 2.5 s of mono float32le.
-fn tone() -> &'static [u8] {
+/// chime twice, then quiet; 2.5 s of mono float32le (the demo plays it too).
+pub fn tone() -> &'static [u8] {
     static TONE: OnceLock<Vec<u8>> = OnceLock::new();
     TONE.get_or_init(|| {
         let sr = RATE as f32;

@@ -259,6 +259,11 @@ pub fn watch_sink() -> Arc<AtomicBool> {
 /// (`[` / `]` in `--test`).
 pub static DEMO_LEVEL: AtomicU32 = AtomicU32::new(4);
 
+/// Set while a call rings: the demo track fades out as a player would and
+/// the built-in chime plays into the ring instead, so a ring in `--demo`
+/// looks like a real one.
+pub static DEMO_RINGING: AtomicBool = AtomicBool::new(false);
+
 /// A synthetic 124 BPM track (kick, off-beat hats, snare on 2/4, bass, pad,
 /// with a breakdown and a drop every 32 bars) written into the ring in real
 /// time. For `--demo` and for testing without a player.
@@ -280,7 +285,11 @@ pub fn start_synth(ring: Arc<Mutex<Ring>>) {
         let mut written = 0u64;
         let notes = [55.0f32, 55.0, 65.41, 49.0]; // A1 A1 C2 G1, one per bar
         let mut lp = 0.0f32;
+        let chime: Vec<f32> = crate::ringer::tone().chunks(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+        let (mut duck, mut at) = (1.0f32, 0usize);
         loop {
+            // a ring: the player's fade out (0.45 s), and back in (1.5 s)
+            let ringing = DEMO_RINGING.load(Ordering::Relaxed);
             // drums and bass fade out below the full mix, push past it above
             let lv = DEMO_LEVEL.load(Ordering::Relaxed) as f32 / 4.0;
             let (drums, bass) = (lv, lv.min(1.0));
@@ -318,10 +327,13 @@ pub fn start_synth(ring: Arc<Mutex<Ring>>) {
                 if breakdown && section >= 30 {
                     s += 0.15 * noise() * ((section - 30) as f32 * 4.0 + b.fract() * 4.0) / 8.0;
                 }
-                let s = (s * 0.6).tanh() * (0.25 + 0.25 * lv);
+                duck = if ringing { (duck - 1.0 / (0.45 * sr)).max(0.0) } else { (duck + 1.0 / (1.5 * sr)).min(1.0) };
+                let bell = if ringing { chime[at % chime.len()] } else { 0.0 };
+                at = if ringing { at + 1 } else { 0 };
+                let s = (s * 0.6).tanh() * (0.25 + 0.25 * lv) * duck;
                 let p = g.pos;
-                g.l[p] = s;
-                g.r[p] = s * 0.9 + 0.05 * noise();
+                g.l[p] = s + bell;
+                g.r[p] = s * 0.9 + 0.05 * noise() * duck + bell;
                 g.pos = (p + 1) % RING;
                 t += 1.0 / sr as f64;
             }

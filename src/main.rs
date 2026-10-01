@@ -217,6 +217,8 @@ fn main() {
     let mut stars = fx::stars::Stars::new();
     let mut rain = fx::rain::Rain::new();
     let mut ribbon = fx::ribbon::Ribbon::new();
+    let mut calm = fx::ribbon::Calm::new();
+    let mut call_tint: Vec<Rgb> = Vec::new();
     let mut banner = fx::banner::Banner::new(&art::variants(text));
     let mut dir = scene::Director::new();
     if let Some(th) = &o.theme {
@@ -426,6 +428,9 @@ fn main() {
         }
         was_ringing = ringing;
         ringer.ring(ringing);
+        audio::DEMO_RINGING.store(ringing && o.demo, Ordering::Relaxed);
+        call_f.target = if ringing { 1.0 } else { 0.0 };
+        call_f.step(dt, if ringing { 0.3 } else { 0.5 });
 
         // ------------------------------------------------------ compose
         cv.clear();
@@ -433,10 +438,14 @@ fn main() {
             fl.step(dt, 2.0);
         }
         idle_layers[1].target = if banner.wants_rain() { 1.0 } else { 0.0 };
-        // the music ribbon runs under every phase; the floor theme has its own bars
+        // the music ribbon runs under every phase, and through a ring, which
+        // it hears (the ringtone); the floor theme has its own bars. Going, it
+        // settles first and then fades
         let holding = banner.holding();
-        ribbon_f.target = if want_music && holding != Some(fx::themes::Theme::Floor) { 1.0 } else { 0.0 };
-        ribbon_f.step(dt, if ribbon_f.target > 0.5 { 0.8 } else { 0.6 });
+        let live = ringing || (want_music && holding != Some(fx::themes::Theme::Floor));
+        calm.feed(f, dt, live);
+        ribbon_f.target = if live { 1.0 } else if calm.since > 0.35 { 0.0 } else { ribbon_f.target };
+        ribbon_f.step(dt, if ribbon_f.target > 0.5 { 0.8 } else { 0.5 });
         lift.target = if holding.is_none() { 1.0 } else { 0.0 };
         lift.step(dt, 0.6);
         if scene_f.on() {
@@ -447,24 +456,39 @@ fn main() {
                 stars.draw(&mut cv, &cx, idle_layers[0].a());
             }
             cv.resolve_dots();
-            if ribbon_f.on() && banner.fits {
-                let room = (h as i32 - banner.bottom() - 1).max(0) as usize;
-                ribbon.draw(&mut cv, &cx, room, ribbon_f.a(), lift.a(), banner.tint());
+        }
+        if ribbon_f.on() && banner.fits {
+            let mut room = h as i32 - banner.bottom() - 1;
+            let mut tint = banner.tint();
+            // under the call view it keeps below the card, in the app's colours
+            if let Some(c) = call.as_ref().filter(|_| call_f.on()) {
+                let k = call_f.a();
+                room += ((h as i32 - fx::call::bottom(c, w, h) - 1 - room) as f32 * k).round() as i32;
+                call_tint.clear();
+                for (x, b) in tint.iter().enumerate() {
+                    let u = (x as f32 / w as f32 - 0.5).abs();
+                    call_tint.push(b.mix(fx::call::hue(c, u, t), k));
+                }
+                tint = &call_tint;
             }
+            ribbon.draw(&mut cv, &Ctx { f: calm.fed(), ..cx }, room.max(0) as usize, ribbon_f.a(), lift.a(), tint);
+        }
+        if scene_f.on() {
             banner.draw(&mut cv, &cx, want_music, &mut dir, &mut spec);
             banner.sample(&cv, dt);
+            // the ribbon (the lit cells) stays
             if scene_f.v < 1.0 {
                 let k = scene_f.a();
                 for y in 0..h as i32 {
                     for x in 0..w as i32 {
-                        cv.dim(x, y, k);
+                        if cv.idx(x, y).is_some_and(|i| !cv.is_lit(i)) {
+                            cv.dim(x, y, k);
+                        }
                     }
                 }
             }
         }
         fx::label::draw(&mut cv, &cx, &track, label_f.a());
-        call_f.target = if ringing { 1.0 } else { 0.0 };
-        call_f.step(dt, if ringing { 0.3 } else { 0.5 });
         if let Some(c) = call.as_ref().filter(|_| call_f.on()) {
             pulse.step(dt, ringing, ringer.round(), if listen { f.onset } else { 0.0 });
             fx::call::draw(&mut cv, &cx, c, &pulse, call_f.a());
