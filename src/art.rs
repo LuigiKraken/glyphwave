@@ -57,7 +57,7 @@ fn home() -> String {
 
 /// The user's own art, used without any flag when it exists.
 pub fn own_banner() -> String {
-    format!("{}/.config/glyphwave/banner.txt", home())
+    crate::config::dir().join("glyphwave/banner.txt").to_string_lossy().into_owned()
 }
 
 /// A banner spec (`logo`, `name` or a path; None for the default) to the
