@@ -58,6 +58,7 @@ struct Opts {
     trace: bool,
     theme: Option<String>,
     truecolor: bool,
+    console: bool,
 }
 
 fn opts() -> Opts {
@@ -75,6 +76,7 @@ fn opts() -> Opts {
         trace: false,
         theme: None,
         truecolor: term::truecolor(),
+        console: std::env::var("TERM").is_ok_and(|t| t == "linux"),
     };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -152,7 +154,7 @@ fn main() {
     }
 
     let (mut w, mut h) = o.size.unwrap_or_else(term::size);
-    let mut cv = Canvas::new(w, h, o.truecolor);
+    let mut cv = Canvas::new(w, h, o.truecolor, o.console);
     let palette = fallback_palette();
     let grad = Gradient::looping(&palette);
 
@@ -232,7 +234,7 @@ fn main() {
             let (nw, nh) = term::size();
             if (nw, nh) != (w, h) || frames == 0 {
                 (w, h) = (nw, nh);
-                cv = Canvas::new(w, h, o.truecolor);
+                cv = Canvas::new(w, h, o.truecolor, o.console);
             }
             cv.force_full();
         }
