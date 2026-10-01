@@ -25,7 +25,8 @@ mouse and it's gone.
    call.
 
 3. Run `glyphwave setup`. It first asks for the banner: your distro's logo,
-   your computer's name, or your own text. Then it asks in the order things
+   your computer's name, or your own text. With more than one screen it
+   then asks whether to run on all of them or just the main one. Then it asks in the order things
    happen: how long you're idle before it starts, how long it runs (or
    forever), whether coming back while it runs shows the lock screen, and
    what comes after the run (sleep, lock or screen off). Then whether it runs
@@ -44,6 +45,16 @@ says it added a question.
 
 Videos and some players hold off the idle timer, so for music you can start
 it yourself with Meta+Ctrl+L (next to Meta+L for lock) or from the app menu.
+
+More than one screen: with `screens = all` (the default) it runs fullscreen
+on every screen, and with `main` on the main one while the others go black.
+Either way it's one process that records and analyses the music once, and a
+key or the mouse on any screen ends it on all of them. Plugging a screen in
+or out while it runs ends it too. This works on KDE (Wayland and X11), sway
+and Hyprland, with any of the terminals below except GNOME Terminal. GNOME
+and other X11 window managers don't let an app choose the screen a window
+opens on, so there it runs on the screen the desktop picks and the others
+stay as they are; setup says so.
 
 Coming back to a locked screen: with `lock_after = 10` in the config, waking
 the screensaver within its first 10 minutes takes you back to the desktop,

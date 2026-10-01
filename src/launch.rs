@@ -31,7 +31,7 @@ pub fn on_battery() -> bool {
 }
 
 /// (pid, argv) of every process we may look at.
-fn processes() -> Vec<(i32, Vec<String>)> {
+pub fn processes() -> Vec<(i32, Vec<String>)> {
     let me = std::process::id() as i32;
     let Ok(rd) = std::fs::read_dir("/proc") else { return Vec::new() };
     rd.flatten()
@@ -77,13 +77,16 @@ pub fn terminal(cfg: &Config) -> Option<String> {
     cfg.terminal.clone().or_else(|| TERMINALS.iter().find(|t| installed(t)).map(|t| t.to_string()))
 }
 
-fn quote(s: &str) -> String {
+pub fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-fn command(term: &str, cfg: &Config, bin: &str, now: bool) -> Option<Vec<String>> {
-    let run: &[&str] = if now { &[bin, "--screensaver", "--now"] } else { &[bin, "--screensaver"] };
-    let v = |a: &[&str]| a.iter().map(|s| s.to_string()).chain(run.iter().map(|s| s.to_string())).collect();
+/// The terminal's command line, fullscreen and black, running `run`. Each
+/// window gets a process of its own (konsole --separate, wezterm
+/// --always-new-process, ghostty without single-instance), so a window's pid
+/// says which one it is when glyphwave places them on several screens.
+pub fn command(term: &str, cfg: &Config, run: &[&str]) -> Option<Vec<String>> {
+    let v = |a: &[&str]| a.iter().chain(run).map(|s| s.to_string()).collect();
     Some(match term {
         "kitty" => v(&["kitty", "--class", "glyphwave", "--start-as=fullscreen", "-o", "background=#000000"]),
         "foot" => v(&["foot", "--app-id=glyphwave", "--fullscreen", "-o", "colors.background=000000"]),
@@ -91,10 +94,10 @@ fn command(term: &str, cfg: &Config, bin: &str, now: bool) -> Option<Vec<String>
             "alacritty", "--class", "glyphwave", "-o", "window.startup_mode=\"Fullscreen\"",
             "-o", "colors.primary.background=\"#000000\"", "-e",
         ]),
-        "ghostty" => v(&["ghostty", "--fullscreen=true", "--background=000000", "-e"]),
-        "wezterm" => v(&["wezterm", "start", "--class", "glyphwave", "--"]), // fullscreen via a window rule
+        "ghostty" => v(&["ghostty", "--gtk-single-instance=false", "--fullscreen=true", "--background=000000", "-e"]),
+        "wezterm" => v(&["wezterm", "start", "--always-new-process", "--class", "glyphwave", "--"]), // fullscreen via a window rule
         "konsole" => {
-            let mut c = vec!["konsole".to_string()];
+            let mut c = vec!["konsole".to_string(), "--separate".to_string()];
             if let Some(p) = &cfg.konsole_profile {
                 c.extend(["--profile".to_string(), p.clone()]);
             }
@@ -103,7 +106,7 @@ fn command(term: &str, cfg: &Config, bin: &str, now: bool) -> Option<Vec<String>
             c
         }
         // standalone, so the process lives as long as the window and holds the lock
-        "ptyxis" => vec!["ptyxis".into(), "-s".into(), "--fullscreen".into(), "-x".into(), format!("{} --screensaver{}", quote(bin), if now { " --now" } else { "" })],
+        "ptyxis" => vec!["ptyxis".into(), "-s".into(), "--fullscreen".into(), "-x".into(), run.iter().map(|a| quote(a)).collect::<Vec<_>>().join(" ")],
         "gnome-terminal" => v(&["gnome-terminal", "--wait", "--full-screen", "--hide-menubar", "--"]),
         "xterm" => v(&["xterm", "-class", "glyphwave", "-fullscreen", "-bg", "black", "-e"]),
         _ => return None,
@@ -132,7 +135,8 @@ pub fn launch(args: &[String]) -> i32 {
         eprintln!("glyphwave: no terminal found; set one under [terminal] in {}", config::path().display());
         return 1;
     };
-    let Some(cmd) = command(&term, &cfg, &bin, has("--now")) else {
+    let run: &[&str] = if has("--now") { &[&bin, "--screensaver", "--now"] } else { &[&bin, "--screensaver"] };
+    let Some(cmd) = command(&term, &cfg, run) else {
         eprintln!("glyphwave: unknown terminal {term:?}; known: {}", TERMINALS.join(" "));
         return 1;
     };

@@ -60,6 +60,31 @@ impl Dim {
     }
 }
 
+/// With more than one screen: run on all of them, or on the main one with
+/// the others black.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Screens {
+    All,
+    Main,
+}
+
+impl Screens {
+    pub fn parse(s: &str) -> Option<Screens> {
+        Some(match s {
+            "all" => Screens::All,
+            "main" => Screens::Main,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Screens::All => "all",
+            Screens::Main => "main",
+        }
+    }
+}
+
 /// Minutes: start the screensaver after `start` idle, then act `after` later.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Times {
@@ -89,6 +114,7 @@ pub struct Config {
     /// lock screen; Some(0) = always, None = never
     pub lock_after: Option<u32>,
     pub dim: Dim,
+    pub screens: Screens,
 }
 
 impl Default for Config {
@@ -108,6 +134,7 @@ impl Default for Config {
             shortcut: Some("Meta+Ctrl+L".into()),
             lock_after: None,
             dim: Dim::No,
+            screens: Screens::All,
         }
     }
 }
@@ -204,6 +231,7 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             ("", "fps") => v.parse::<f32>().map(|f| c.fps = Some(f)).map_err(|_| format!("fps {v:?} isn't a number")),
             ("", "ringtone") => set(&mut c.ringtone, v),
             ("", "lock_after") => lock_minutes(&v).map(|m| c.lock_after = m),
+            ("", "screens") => Screens::parse(&v).map(|m| c.screens = m).ok_or(format!("screens is all or main, not {v:?}")),
             ("", "dim") => Dim::parse(&v).map(|d| c.dim = d).ok_or(format!("dim is yes, no or battery, not {v:?}")),
             ("battery", "start_after") => minutes(&v).map(|m| bs = Some(m)),
             ("battery", "then") => then(&v).map(|t| bt = Some(t)),
@@ -253,6 +281,7 @@ impl Config {
         s += &format!("lock_after = {lock}          # after this many minutes, waking it lands on the lock screen; 0 always, none never\n");
         s += &format!("on_battery = {}            # no: only when plugged in\n", if self.on_battery { "yes" } else { "no" });
         s += &format!("dim = {}                   # dim the screen while it runs: yes, no or battery (KDE)\n", self.dim.name());
+        s += &format!("screens = {}               # with more than one screen: all, or main (the others black)\n", self.screens.name());
         match &self.banner {
             Some(b) => s += &format!("banner = {b}\n"),
             None => s += "# banner = logo         # logo, name, text:<your words>, or a path to a text file\n",
@@ -381,6 +410,7 @@ mod tests {
             shortcut: None,
             lock_after: Some(0),
             dim: Dim::Battery,
+            screens: Screens::Main,
             ..Config::default()
         };
         let (back, e) = parse(&c.render());
@@ -402,6 +432,14 @@ mod tests {
         let (c, e) = parse("lock_after = soon\n[battery]\nlock_after = 1\n");
         assert_eq!(e.len(), 2, "{e:?}");
         assert_eq!(c.lock_after, None);
+    }
+
+    #[test]
+    fn screens() {
+        assert_eq!(parse("").0.screens, Screens::All);
+        assert_eq!(parse("screens = main\n").0.screens, Screens::Main);
+        let (c, e) = parse("screens = some\n");
+        assert_eq!((c.screens, e.len()), (Screens::All, 1));
     }
 
     #[test]

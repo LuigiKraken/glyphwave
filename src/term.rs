@@ -8,21 +8,29 @@ const STDIN: RawFd = 0;
 const STDOUT: RawFd = 1;
 
 pub struct Term {
+    /// where it reads keys and writes frames: stdin and stdout, or the
+    /// terminal of another screen
+    pub fd_in: RawFd,
+    pub fd: RawFd,
     saved: Option<libc::termios>,
     mouse: bool,
 }
 
 impl Term {
     pub fn enter(mouse: bool) -> Term {
+        Term::on(STDIN, STDOUT, mouse)
+    }
+
+    pub fn on(fd_in: RawFd, fd: RawFd, mouse: bool) -> Term {
         let saved = unsafe {
             let mut t: libc::termios = std::mem::zeroed();
-            if libc::tcgetattr(STDIN, &mut t) == 0 {
+            if libc::tcgetattr(fd_in, &mut t) == 0 {
                 let orig = t;
                 t.c_lflag &= !(libc::ICANON | libc::ECHO | libc::IEXTEN);
                 t.c_iflag &= !(libc::IXON | libc::ICRNL);
                 t.c_cc[libc::VMIN] = 0;
                 t.c_cc[libc::VTIME] = 0;
-                libc::tcsetattr(STDIN, libc::TCSANOW, &t);
+                libc::tcsetattr(fd_in, libc::TCSANOW, &t);
                 Some(orig)
             } else {
                 None
@@ -32,8 +40,12 @@ impl Term {
         if mouse {
             s.push_str("\x1b[?1003h\x1b[?1006h");
         }
-        write_all(s.as_bytes());
-        Term { saved, mouse }
+        write_to(fd, s.as_bytes());
+        Term { fd_in, fd, saved, mouse }
+    }
+
+    pub fn write(&self, b: &[u8]) {
+        write_to(self.fd, b);
     }
 
     pub fn restore(&mut self) {
@@ -42,9 +54,9 @@ impl Term {
             s.push_str("\x1b[?1006l\x1b[?1003l");
         }
         s.push_str("\x1b[0m\x1b]111\x07\x1b[?7h\x1b[?25h\x1b[?1049l");
-        write_all(s.as_bytes());
+        write_to(self.fd, s.as_bytes());
         if let Some(t) = self.saved.take() {
-            unsafe { libc::tcsetattr(STDIN, libc::TCSANOW, &t) };
+            unsafe { libc::tcsetattr(self.fd_in, libc::TCSANOW, &t) };
         }
     }
 }
@@ -61,9 +73,13 @@ pub fn emergency_restore() {
 }
 
 pub fn size() -> (usize, usize) {
+    size_of(STDOUT)
+}
+
+pub fn size_of(fd: RawFd) -> (usize, usize) {
     unsafe {
         let mut ws: libc::winsize = std::mem::zeroed();
-        if libc::ioctl(STDOUT, libc::TIOCGWINSZ, &mut ws) == 0 && ws.ws_col > 0 {
+        if libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) == 0 && ws.ws_col > 0 {
             (ws.ws_col as usize, ws.ws_row as usize)
         } else {
             (80, 24)
@@ -71,19 +87,27 @@ pub fn size() -> (usize, usize) {
     }
 }
 
-/// Wait up to `timeout_ms` for input; returns whatever bytes arrived.
-/// With `stdin` false (not a tty, e.g. /dev/null) this is just a sleep.
-pub fn poll_input(timeout_ms: i32, stdin: bool, buf: &mut Vec<u8>) {
+/// Wait up to `timeout_ms` for input on any of `fds` (stdin, and the other
+/// screens' terminals); whatever arrived goes into `buf`. With no fds (stdin
+/// isn't a tty, e.g. /dev/null) this is just a sleep. True when one of the
+/// other terminals went away: its window closed.
+pub fn poll_input(timeout_ms: i32, fds: &[RawFd], buf: &mut Vec<u8>) -> bool {
     buf.clear();
-    let mut fds = libc::pollfd { fd: STDIN, events: libc::POLLIN, revents: 0 };
-    let r = unsafe { libc::poll(&mut fds, stdin as libc::nfds_t, timeout_ms.max(0)) };
-    if r > 0 && fds.revents & libc::POLLIN != 0 {
-        let mut tmp = [0u8; 256];
-        let n = unsafe { libc::read(STDIN, tmp.as_mut_ptr() as *mut _, tmp.len()) };
-        if n > 0 {
-            buf.extend_from_slice(&tmp[..n as usize]);
+    let mut p: Vec<libc::pollfd> = fds.iter().map(|&fd| libc::pollfd { fd, events: libc::POLLIN, revents: 0 }).collect();
+    let r = unsafe { libc::poll(p.as_mut_ptr(), p.len() as libc::nfds_t, timeout_ms.max(0)) };
+    let mut gone = false;
+    for q in p.iter().filter(|_| r > 0) {
+        if q.revents & libc::POLLIN != 0 {
+            let mut tmp = [0u8; 256];
+            let n = unsafe { libc::read(q.fd, tmp.as_mut_ptr() as *mut _, tmp.len()) };
+            if n > 0 {
+                buf.extend_from_slice(&tmp[..n as usize]);
+                continue;
+            }
         }
+        gone |= q.fd != STDIN && q.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0;
     }
+    gone
 }
 
 /// The keys that drive the player without waking the screensaver: - previous,
@@ -146,14 +170,49 @@ pub fn stdin_is_tty() -> bool {
 }
 
 pub fn write_all(b: &[u8]) {
-    let mut out = std::io::stdout().lock();
-    let _ = out.write_all(b);
-    let _ = out.flush();
+    write_to(STDOUT, b);
+}
+
+pub fn write_to(fd: RawFd, mut b: &[u8]) {
+    if fd == STDOUT {
+        let mut out = std::io::stdout().lock();
+        let _ = out.write_all(b);
+        let _ = out.flush();
+        return;
+    }
+    while !b.is_empty() {
+        let n = unsafe { libc::write(fd, b.as_ptr().cast(), b.len()) };
+        if n <= 0 {
+            return; // gone; the poll notices
+        }
+        b = &b[n as usize..];
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::wakes;
+    use super::{Term, poll_input, wakes};
+
+    #[test]
+    fn another_screens_terminal() {
+        let (mut m, mut sl) = (0, 0);
+        let n = std::ptr::null_mut();
+        assert_eq!(unsafe { libc::openpty(&mut m, &mut sl, n, std::ptr::null(), std::ptr::null()) }, 0);
+        let t = Term::on(sl, sl, true); // raw, as glyphwave sets it
+        let mut buf = Vec::new();
+        // a key on it arrives like one on stdin
+        unsafe { libc::write(m, b"x".as_ptr().cast(), 1) };
+        assert!(!poll_input(100, &[sl], &mut buf));
+        assert_eq!(buf, b"x");
+        // nothing: just the wait
+        assert!(!poll_input(10, &[sl], &mut buf));
+        assert!(buf.is_empty());
+        // its window closed
+        unsafe { libc::close(m) };
+        assert!(poll_input(100, &[sl], &mut buf));
+        drop(t);
+        unsafe { libc::close(sl) };
+    }
 
     #[test]
     fn function_and_music_keys_do_not_wake() {

@@ -26,6 +26,10 @@ The terminal is the first installed of the launcher's list; on Fedora that
 is usually Ptyxis (`ptyxis -s --fullscreen`), or gnome-terminal. glyphwave
 exits when GNOME's lock screen comes up (`org.gnome.ScreenSaver`).
 
+More than one screen: GNOME doesn't let an app choose the screen a window
+opens on, so glyphwave runs on the one GNOME picks and the others stay as they are; setup says so, and `screens` has no
+effect here.
+
 `lock_after` in the config: woken after that many minutes, glyphwave runs
 `loginctl lock-session` and closes once GNOME's lock screen is up. With
 `then = lock`, GNOME's blank-and-lock timer still ends the screensaver at

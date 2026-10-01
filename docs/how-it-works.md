@@ -166,7 +166,9 @@ folder, keeps the originals, and `glyphwave setup --remove` puts everything
 back.
 
 The first question is the banner (`logo`, `name` or `text`; `text` takes
-your words or the path to your own art). The rest follow the order things
+your words or the path to your own art). With more than one screen, and a
+desktop and terminal that can place windows (see below), the next is
+`screens`: all of them, or just the main one. The rest follow the order things
 happen: idle minutes before it starts (`start_after`), how long it runs
 (`then_after`, or `forever` for `then = none`), whether coming back while it
 runs shows the lock screen (`lock_after`), what comes after the run (`then`,
@@ -183,7 +185,7 @@ To change your answers, edit `~/.config/glyphwave/config` or run
 and delete `~/.local/bin/glyphwave`.
 
 **The config file** has the general settings at the top (`start_after`,
-`then`, `then_after`, `lock_after`, `on_battery`, `dim`, `banner`, `fps`) and optional sections
+`then`, `then_after`, `lock_after`, `on_battery`, `dim`, `screens`, `banner`, `fps`) and optional sections
 below, commented out: shorter times on battery, which terminal to open (and a
 Konsole profile, if you made one), and the locker for Hyprland, sway and X11.
 
@@ -204,6 +206,51 @@ which both lock screens answer; on Hyprland, sway and X11 it runs the
 screensaver up for longer and still have it lock, pair `lock_after` with
 `then = screen-off` or `none` (and on KDE turn off its own lock timer, which
 setup warns about).
+
+## More than one screen
+
+`screens = all` (the default) runs the screensaver fullscreen on every
+screen; `main` runs it on the main one and turns the others black. Black
+rather than left as they were, so the desktop isn't on show while you're
+away, and so a key or the mouse on any screen still finds a glyphwave window
+and ends it. A black screen costs nothing after it's painted: glyphwave
+sends it no frames.
+
+It stays one process. Each extra screen gets a terminal of its own running
+`glyphwave --screensaver --screen N`, a stub that only keeps the window
+open. The main process opens the stub's terminal, draws into it and reads
+its keys and mouse, like its own. So the audio is recorded and analysed
+once, the bus is watched once, the ringtone rings once, and the lock
+(`lock_after`, or the locker taking over) happens once; each screen only
+adds its own drawing, about 0.3 ms a frame, and the terminal's redraw. Every
+screen gets its own banner cycle and theme picks, fed by the same analysis,
+so they react to the same beats and drops but don't show the same theme at
+the same moment.
+
+- **Ending it.** Any key or the mouse on any screen ends it on all of them,
+  and so does closing one of the windows. Plugging a screen in or out while
+  it runs ends it as well (it checks the connectors in
+  `/sys/class/drm` every 2 s): someone is at the machine, and the desktop
+  may have moved a window onto another screen. All of these count as waking
+  it, so `lock_after` applies.
+- **No strays.** A stub waits on a lock the main process holds, so when the
+  main process ends, however it ends (`launch --stop`, a crash, `kill -9`),
+  every stub exits and its window closes. `launch --stop` stops the stubs
+  too. A terminal whose stub doesn't show up within 10 s is closed.
+- **Placing the windows** is the compositor's job, and each has its own way:
+
+  | desktop | how | main screen |
+  |---|---|---|
+  | KDE, Wayland and X11 | a KWin script, loaded over D-Bus, puts each window by its pid fullscreen on its screen, now and as it opens; it's unloaded when glyphwave ends | the primary screen (System Settings > Display) |
+  | sway | `swaymsg '[pid=…] move container to output …'` once the window is there | the focused screen (sway has no primary) |
+  | Hyprland | the terminal is started through `hyprctl dispatch exec '[monitor …; fullscreen] …'` | the focused screen |
+  | GNOME, other X11 window managers | can't be done: there's no way for an app to choose the screen | one window, on the screen the desktop picks; the others stay as they are |
+
+  Placing by pid needs one process per window, so the launcher starts
+  Konsole with `--separate`, WezTerm with `--always-new-process` and Ghostty
+  with `--gtk-single-instance=false`. GNOME Terminal opens every window from
+  one server process, so with it glyphwave also stays on one screen. Setup
+  says so in both cases, rather than half-working.
 
 ## What a system needs
 
@@ -232,6 +279,7 @@ See [contrib/gnome](../contrib/gnome/README.md) for Fedora.
 | `config.rs` | `~/.config/glyphwave/config` |
 | `setup.rs` | `glyphwave setup` and `--remove`, per desktop |
 | `launch.rs` | `glyphwave launch` (the terminal) and `idle-watch` (GNOME) |
+| `screens.rs` | more than one screen: the extra terminals, their stubs, placing them per desktop, plugging in and out |
 | `fx/*` | banner cycle, text effects, music themes, bar floor, music ribbon, call view, idle stars / rain, player label |
 | `scene.rs` | picks each cycle's theme and says when its hold ends |
 

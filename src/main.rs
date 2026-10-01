@@ -14,6 +14,7 @@ mod launch;
 mod mpris;
 mod ringer;
 mod scene;
+mod screens;
 mod setup;
 mod term;
 
@@ -64,7 +65,8 @@ USAGE: glyphwave [options]
 
 banner and fps also come from ~/.config/glyphwave/config (setup writes it);
 options given here win. ringtone = default, none or a sound file (wav, ogg,
-flac) there picks what plays while a call rings.
+flac) there picks what plays while a call rings. With more than one screen,
+screens = all (every screen) or main (the main one, the others black).
 
 KEYS (interactive): q quit · space play/pause · n next · p previous ·
   v next theme/effect · i idle/music · d debug · l next banner (logo, name,
@@ -175,6 +177,64 @@ fn opts() -> Opts {
     o
 }
 
+/// One screen's scene: everything that depends on its size. The first is
+/// this terminal's; with `screens = all` each other screen gets one too.
+struct View {
+    /// another screen's terminal; None = this one
+    term: Option<term::Term>,
+    w: usize,
+    h: usize,
+    cv: Canvas,
+    banner: fx::banner::Banner,
+    dir: scene::Director,
+    spec: fx::spectrum::Spectrum,
+    stars: fx::stars::Stars,
+    rain: fx::rain::Rain,
+    ribbon: fx::ribbon::Ribbon,
+    calm: fx::ribbon::Calm,
+    call_tint: Vec<Rgb>,
+    idle_layers: [Fader; 2], // stars, rain
+    idle_cycle: u64,
+    ribbon_f: Fader,
+    lift: Fader,
+    // how wild the music is right now, for the ribbon's sparks, and the
+    // seconds left of the rush after a drop
+    wild: Fader,
+    rush: f32,
+}
+
+impl View {
+    fn new(term: Option<term::Term>, (w, h): (usize, usize), text: &str, o: &Opts) -> View {
+        let mut dir = scene::Director::new();
+        if let Some(th) = &o.theme {
+            if let Err(e) = dir.lock(th) {
+                eprintln!("glyphwave: {e}");
+                std::process::exit(2);
+            }
+        }
+        View {
+            term,
+            w,
+            h,
+            cv: Canvas::new(w, h, o.truecolor, o.console),
+            banner: fx::banner::Banner::new(&art::variants(text.to_string())),
+            dir,
+            spec: fx::spectrum::Spectrum::new(),
+            stars: fx::stars::Stars::new(),
+            rain: fx::rain::Rain::new(),
+            ribbon: fx::ribbon::Ribbon::new(),
+            calm: fx::ribbon::Calm::new(),
+            call_tint: Vec::new(),
+            idle_layers: [Fader::default(); 2],
+            idle_cycle: 0,
+            ribbon_f: Fader::default(),
+            lift: Fader::default(),
+            wild: Fader::default(),
+            rush: 0.0,
+        }
+    }
+}
+
 /// Seconds since boot, sleep included (Instant leaves it out).
 fn boot_secs() -> f64 {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
@@ -188,6 +248,7 @@ fn main() {
         Some("setup") => std::process::exit(setup::run(&args[1..])),
         Some("launch") => std::process::exit(launch::launch(&args[1..])),
         Some("idle-watch") => std::process::exit(launch::idle_watch()),
+        Some("--screensaver") if args.get(1).is_some_and(|a| a == "--screen") => std::process::exit(screens::stub()),
         _ => {}
     }
     let o = opts();
@@ -231,45 +292,27 @@ fn main() {
     let hushed = if o.demo { Arc::new(AtomicBool::new(false)) } else { audio::watch_sink() };
     let (mut fake_pause, mut fake_mute) = (false, false);
     let mut an = dsp::Analyzer::new();
-    let mut spec = fx::spectrum::Spectrum::new();
-    let mut stars = fx::stars::Stars::new();
-    let mut rain = fx::rain::Rain::new();
-    let mut ribbon = fx::ribbon::Ribbon::new();
-    let mut calm = fx::ribbon::Calm::new();
-    let mut call_tint: Vec<Rgb> = Vec::new();
-    let mut banner = fx::banner::Banner::new(&art::variants(text));
-    let mut dir = scene::Director::new();
-    if let Some(th) = &o.theme {
-        if let Err(e) = dir.lock(th) {
-            eprintln!("glyphwave: {e}");
-            std::process::exit(2);
-        }
-    }
-
-    let (mut w, mut h) = o.size.unwrap_or_else(term::size);
-    let mut cv = Canvas::new(w, h, o.truecolor, o.console);
+    let mut text = text;
+    let mut views = vec![View::new(None, o.size.unwrap_or_else(term::size), &text, &o)];
+    // the other screens: a scene each (all), or black (main)
+    let mut extra = if o.screensaver && o.size.is_none() && tty_in { screens::Extra::start(&o.cfg) } else { None };
+    // a black screen, and the size it was painted at
+    let mut blanks: Vec<(term::Term, (usize, usize))> = Vec::new();
     let palette = fallback_palette();
     let grad = Gradient::looping(&palette);
 
     let mut music = Fader::default();
     let mut label_f = Fader::default();
-    let mut ribbon_f = Fader::default();
-    let mut lift = Fader::default();
-    // how wild the music is right now, for the ribbon's sparks, and the
-    // seconds left of the rush after a drop
-    let (mut wild, mut rush) = (Fader::default(), 0.0f32);
     let mut call_f = Fader::default();
     let mut pulse = fx::call::Pulse::new();
     let mut scene_f = Fader { v: 1.0, target: 1.0 };
     // the last call seen, kept after it ends for the fade-out
     let (mut call, mut call_seen) = (None::<calls::Call>, 0u32);
-    let mut idle_layers = [Fader::default(); 2]; // stars, rain
     let mut idle_forced = o.idle;
     let mut debug = o.debug;
     let mut phase = 0.0f32;
     let mut not_playing = 0.0f32;
     let mut rng = fx::Rng::seeded();
-    let mut idle_cycle = 0u64;
     let mut traced = String::new();
 
     let frame_dt = Duration::from_secs_f32(1.0 / o.fps);
@@ -279,18 +322,42 @@ fn main() {
     let mut last = Instant::now();
     let mut next_frame = Instant::now();
     let mut input = Vec::new();
-    let grace = if o.screensaver { 0.5 } else { 0.0 };
+    // swallows the launch keypress, and whatever a window that just opened sends
+    let mut grace = if o.screensaver { 0.5 } else { 0.0 };
+    let mut fds: Vec<i32> = Vec::new();
     let (mut frames, mut bytes, mut busy) = (0u64, 0u64, Duration::ZERO);
 
     'main: loop {
         if quit.load(Ordering::Relaxed) || watcher.locked.load(Ordering::Relaxed) {
             break;
         }
+        if let Some(x) = extra.as_mut() {
+            for (_, fd) in x.attach() {
+                let tm = term::Term::on(fd, fd, true);
+                if o.cfg.screens == config::Screens::All {
+                    views.push(View::new(Some(tm), term::size_of(fd), &text, &o));
+                } else {
+                    blanks.push((tm, (0, 0)));
+                }
+                grace = start.elapsed().as_secs_f32() + 0.7;
+            }
+            // a screen plugged in or out: someone's there, and a window may have moved
+            if x.replugged() {
+                dismissed = true;
+                break;
+            }
+        }
+        fds.clear();
+        fds.extend(tty_in.then_some(0));
+        fds.extend(views.iter().filter_map(|v| v.term.as_ref()).chain(blanks.iter().map(|b| &b.0)).map(|t| t.fd));
         // input until the next frame is due
         loop {
             let wait = next_frame.saturating_duration_since(Instant::now());
             // rounded up: poll(0) on the last fraction of a ms would spin
-            term::poll_input(wait.as_millis() as i32 + 1, tty_in, &mut input);
+            if term::poll_input(wait.as_millis() as i32 + 1, &fds, &mut input) {
+                dismissed = true; // another screen's window closed
+                break 'main;
+            }
             if !input.is_empty() {
                 let t = start.elapsed().as_secs_f32();
                 // while a call rings every key ends glyphwave, music keys too
@@ -316,7 +383,7 @@ fn main() {
                 for &b in &input {
                     match b {
                         b'q' | 3 | 27 => break 'main,
-                        b'0'..=b'9' if o.test => dir.jump(fx::themes::ALL[(b - b'0' + 9) as usize % 10]),
+                        b'0'..=b'9' if o.test => views.iter_mut().for_each(|v| v.dir.jump(fx::themes::ALL[(b - b'0' + 9) as usize % 10])),
                         b'd' if o.test => calls.fake("discord", "pixelfox", "Incoming call"),
                         b't' if o.test => calls.fake("Microsoft Teams", "Morgan Lee is calling you", ""),
                         b's' if o.test => calls.fake("Slack", "Sam Rivera invited you to a huddle", ""),
@@ -333,10 +400,8 @@ fn main() {
                         b'n' | b'+' => watcher.control("Next"),
                         b'p' | b'-' => watcher.control("Previous"),
                         b'v' => {
-                            if banner.theme().is_some() {
-                                dir.next()
-                            } else {
-                                banner.skip_idle()
+                            for v in &mut views {
+                                if v.banner.theme().is_some() { v.dir.next() } else { v.banner.skip_idle() }
                             }
                         }
                         b'i' => idle_forced = !idle_forced,
@@ -344,7 +409,8 @@ fn main() {
                         b'l' => {
                             if let Some((s, t)) = art::next(&source, &own, o.test) {
                                 source = s;
-                                banner.swap(&art::variants(t));
+                                views.iter_mut().for_each(|v| v.banner.swap(&art::variants(t.clone())));
+                                text = t;
                             }
                         }
                         _ => {}
@@ -365,15 +431,27 @@ fn main() {
         last = now;
         let t = start.elapsed().as_secs_f32();
 
-        if resized.swap(false, Ordering::Relaxed) && o.size.is_none() {
-            let (nw, nh) = term::size();
-            if (nw, nh) != (w, h) || frames == 0 {
-                (w, h) = (nw, nh);
-                cv = Canvas::new(w, h, o.truecolor, o.console);
+        let main_resized = resized.swap(false, Ordering::Relaxed) && o.size.is_none();
+        for (i, v) in views.iter_mut().enumerate() {
+            // the other screens' terminals don't signal; their size is asked each frame
+            let size = match &v.term {
+                Some(tm) => Some(term::size_of(tm.fd)).filter(|&s| s != (v.w, v.h)),
+                None => main_resized.then(term::size),
+            };
+            if let Some((nw, nh)) = size {
+                if (nw, nh) != (v.w, v.h) || frames == 0 {
+                    (v.w, v.h) = (nw, nh);
+                    v.cv = Canvas::new(nw, nh, o.truecolor, o.console);
+                }
+                v.cv.force_full();
             }
-            cv.force_full();
+            // one analysis for all: its bars fit the first screen, the
+            // others sample them
+            let n = v.spec.bars_for(v.w);
+            if i == 0 {
+                an.set_bars(n);
+            }
         }
-        an.set_bars(spec.bars_for(w));
 
         let track = watcher.snapshot();
 
@@ -414,18 +492,11 @@ fn main() {
         let want_music = playing && !idle_forced && !(f.silent && f.silent_for > 4.0);
         music.target = if want_music { 1.0 } else { 0.0 };
         music.step(dt, if want_music { 1.2 } else { 2.0 });
-        let themed = banner.theme().is_some();
-        if banner.cycles != idle_cycle {
-            // each new idle effect gets a fresh ambience: stars or none
-            idle_cycle = banner.cycles;
-            idle_layers[0].target = if !themed && rng.chance(0.3) { 1.0 } else { 0.0 };
-        }
         label_f.target = if track.playing() && !hush && !idle_forced { 1.0 } else { 0.0 };
         label_f.step(dt, if label_f.target > 0.5 { 1.0 } else { 0.4 });
 
         phase = (phase + dt * 0.004) % 1.0;
         let light = 0.8 + 0.2 * f.loud * music.a() + 0.2 * (1.0 - music.a());
-        let cx = Ctx { f, w, h, t, dt, palette: &palette, grad: &grad, phase, light };
 
         // a ringing call: the scene (banner, theme, ribbon, ambience) and the
         // call view crossfade, quickly so the call is up at once; when it
@@ -456,106 +527,131 @@ fn main() {
         call_f.target = if ringing { 1.0 } else { 0.0 };
         call_f.step(dt, if ringing { 0.3 } else { 0.5 });
 
+        if call.as_ref().is_some_and(|_| call_f.on()) {
+            pulse.step(dt, ringing, ringer.round(), if listen { f.onset } else { 0.0 });
+        }
+
         // ------------------------------------------------------ compose
-        cv.clear();
-        for fl in &mut idle_layers {
-            fl.step(dt, 2.0);
-        }
-        idle_layers[1].target = if banner.wants_rain() { 1.0 } else { 0.0 };
-        // the music ribbon runs under every phase, and through a ring, which
-        // it hears (the ringtone); the floor theme has its own bars. Going, it
-        // settles first and then fades
-        let holding = banner.holding();
-        let live = ringing || (want_music && holding != Some(fx::themes::Theme::Floor));
-        calm.feed(f, dt, live, ringing);
-        ribbon_f.target = if live { 1.0 } else if calm.since > 0.35 { 0.0 } else { ribbon_f.target };
-        ribbon_f.step(dt, if ribbon_f.target > 0.5 { 0.8 } else { 0.5 });
-        lift.target = if holding.is_none() { 1.0 } else { 0.0 };
-        lift.step(dt, 0.6);
-        // wild: the stretch after a drop, or peak intensity under one of the
-        // explosive themes (shock, glitch, warp, fire)
-        rush = if f.drop { 8.0 } else { (rush - dt).max(0.0) };
-        let peak = holding.is_some_and(|t| t.busy() >= 0.75) && f.intensity > 0.75;
-        wild.target = if rush > 0.0 || peak { 1.0 } else { 0.0 };
-        wild.step(dt, if wild.target > 0.5 { 1.0 } else { 2.5 });
-        if scene_f.on() {
-            if idle_layers[1].on() {
-                rain.draw(&mut cv, &cx, idle_layers[1].a());
+        for (i, v) in views.iter_mut().enumerate() {
+            let View { w, h, cv, banner, dir, spec, stars, rain, ribbon, calm, call_tint, idle_layers, ribbon_f, lift, wild, rush, .. } = v;
+            let (w, h) = (*w, *h);
+            let cx = Ctx { f, w, h, t, dt, palette: &palette, grad: &grad, phase, light };
+            let themed = banner.theme().is_some();
+            if banner.cycles != v.idle_cycle {
+                // each new idle effect gets a fresh ambience: stars or none
+                v.idle_cycle = banner.cycles;
+                idle_layers[0].target = if !themed && rng.chance(0.3) { 1.0 } else { 0.0 };
             }
-            if idle_layers[0].on() {
-                stars.draw(&mut cv, &cx, idle_layers[0].a());
+            cv.clear();
+            for fl in idle_layers.iter_mut() {
+                fl.step(dt, 2.0);
             }
-            cv.resolve_dots();
-        }
-        if ribbon_f.on() && banner.fits {
-            let mut room = h as i32 - banner.bottom() - 1;
-            let mut tint = banner.tint();
-            // under the call view it keeps below the card, in the app's colours
-            if let Some(c) = call.as_ref().filter(|_| call_f.on()) {
-                let k = call_f.a();
-                room += ((h as i32 - fx::call::bottom(c, w, h) - 1 - room) as f32 * k).round() as i32;
-                call_tint.clear();
-                for (x, b) in tint.iter().enumerate() {
-                    let u = (x as f32 / w as f32 - 0.5).abs();
-                    call_tint.push(b.mix(fx::call::hue(c, u, t), k));
+            idle_layers[1].target = if banner.wants_rain() { 1.0 } else { 0.0 };
+            // the music ribbon runs under every phase, and through a ring, which
+            // it hears (the ringtone); the floor theme has its own bars. Going, it
+            // settles first and then fades
+            let holding = banner.holding();
+            let live = ringing || (want_music && holding != Some(fx::themes::Theme::Floor));
+            calm.feed(f, dt, live, ringing);
+            ribbon_f.target = if live { 1.0 } else if calm.since > 0.35 { 0.0 } else { ribbon_f.target };
+            ribbon_f.step(dt, if ribbon_f.target > 0.5 { 0.8 } else { 0.5 });
+            lift.target = if holding.is_none() { 1.0 } else { 0.0 };
+            lift.step(dt, 0.6);
+            // wild: the stretch after a drop, or peak intensity under one of the
+            // explosive themes (shock, glitch, warp, fire)
+            *rush = if f.drop { 8.0 } else { (*rush - dt).max(0.0) };
+            let peak = holding.is_some_and(|t| t.busy() >= 0.75) && f.intensity > 0.75;
+            wild.target = if *rush > 0.0 || peak { 1.0 } else { 0.0 };
+            wild.step(dt, if wild.target > 0.5 { 1.0 } else { 2.5 });
+            if scene_f.on() {
+                if idle_layers[1].on() {
+                    rain.draw(cv, &cx, idle_layers[1].a());
                 }
-                tint = &call_tint;
+                if idle_layers[0].on() {
+                    stars.draw(cv, &cx, idle_layers[0].a());
+                }
+                cv.resolve_dots();
             }
-            ribbon.draw(&mut cv, &Ctx { f: calm.fed(), ..cx }, room.max(0) as usize, ribbon_f.a(), lift.a(), wild.a(), tint);
-        }
-        if scene_f.on() {
-            banner.draw(&mut cv, &cx, want_music, &mut dir, &mut spec);
-            banner.sample(&cv, dt);
-            // the ribbon (the lit cells) stays
-            if scene_f.v < 1.0 {
-                let k = scene_f.a();
-                for y in 0..h as i32 {
-                    for x in 0..w as i32 {
-                        if cv.idx(x, y).is_some_and(|i| !cv.is_lit(i)) {
-                            cv.dim(x, y, k);
+            if ribbon_f.on() && banner.fits {
+                let mut room = h as i32 - banner.bottom() - 1;
+                let mut tint = banner.tint();
+                // under the call view it keeps below the card, in the app's colours
+                if let Some(c) = call.as_ref().filter(|_| call_f.on()) {
+                    let k = call_f.a();
+                    room += ((h as i32 - fx::call::bottom(c, w, h) - 1 - room) as f32 * k).round() as i32;
+                    call_tint.clear();
+                    for (x, b) in tint.iter().enumerate() {
+                        let u = (x as f32 / w as f32 - 0.5).abs();
+                        call_tint.push(b.mix(fx::call::hue(c, u, t), k));
+                    }
+                    tint = call_tint;
+                }
+                ribbon.draw(cv, &Ctx { f: calm.fed(), ..cx }, room.max(0) as usize, ribbon_f.a(), lift.a(), wild.a(), tint);
+            }
+            if scene_f.on() {
+                banner.draw(cv, &cx, want_music, dir, spec);
+                banner.sample(cv, dt);
+                // the ribbon (the lit cells) stays
+                if scene_f.v < 1.0 {
+                    let k = scene_f.a();
+                    for y in 0..h as i32 {
+                        for x in 0..w as i32 {
+                            if cv.idx(x, y).is_some_and(|i| !cv.is_lit(i)) {
+                                cv.dim(x, y, k);
+                            }
                         }
                     }
                 }
             }
-        }
-        fx::label::draw(&mut cv, &cx, &track, label_f.a());
-        if let Some(c) = call.as_ref().filter(|_| call_f.on()) {
-            pulse.step(dt, ringing, ringer.round(), if listen { f.onset } else { 0.0 });
-            fx::call::draw(&mut cv, &cx, c, &pulse, call_f.a());
-        }
-        if debug {
-            let s = format!(
-                " {:>4.1}ms {:>6}B  {:>5.1}bpm conf {:.2}  loud {:.2} en {:.2} int {:.2} cen {:.2} flat {:.2}  {}{}{}  ten {:.2}  {} ",
-                busy.as_secs_f32() * 1000.0 / frames.max(1) as f32,
-                bytes / frames.max(1),
-                f.bpm,
-                f.beat_conf,
-                f.loud,
-                f.energy,
-                f.intensity,
-                f.centroid,
-                f.flatness,
-                if f.kick_env > 0.5 { 'K' } else { '·' },
-                if f.snare_env > 0.5 { 'S' } else { '·' },
-                if f.hat_env > 0.5 { 'H' } else { '·' },
-                f.tension,
-                if themed { dir.name.clone() } else { format!("idle:{:?}", banner.current) },
-            ) + if hush { "muted " } else { "" }
-                + if fake_pause { "paused " } else { "" }
-                + &if o.test { format!("demo {}/6 ", audio::DEMO_LEVEL.load(Ordering::Relaxed)) } else { String::new() };
-            for x in 0..w as i32 {
-                cv.dim(x, h as i32 - 1, 0.1);
+            fx::label::draw(cv, &cx, &track, label_f.a());
+            if let Some(c) = call.as_ref().filter(|_| call_f.on()) {
+                fx::call::draw(cv, &cx, c, &pulse, call_f.a());
             }
-            cv.text(0, h as i32 - 1, &s, Rgb(200, 200, 200));
-        }
+            if debug && i == 0 {
+                let s = format!(
+                    " {:>4.1}ms {:>6}B  {:>5.1}bpm conf {:.2}  loud {:.2} en {:.2} int {:.2} cen {:.2} flat {:.2}  {}{}{}  ten {:.2}  {} ",
+                    busy.as_secs_f32() * 1000.0 / frames.max(1) as f32,
+                    bytes / frames.max(1),
+                    f.bpm,
+                    f.beat_conf,
+                    f.loud,
+                    f.energy,
+                    f.intensity,
+                    f.centroid,
+                    f.flatness,
+                    if f.kick_env > 0.5 { 'K' } else { '·' },
+                    if f.snare_env > 0.5 { 'S' } else { '·' },
+                    if f.hat_env > 0.5 { 'H' } else { '·' },
+                    f.tension,
+                    if themed { dir.name.clone() } else { format!("idle:{:?}", banner.current) },
+                ) + if hush { "muted " } else { "" }
+                    + if fake_pause { "paused " } else { "" }
+                    + &if o.test { format!("demo {}/6 ", audio::DEMO_LEVEL.load(Ordering::Relaxed)) } else { String::new() };
+                for x in 0..w as i32 {
+                    cv.dim(x, h as i32 - 1, 0.1);
+                }
+                cv.text(0, h as i32 - 1, &s, Rgb(200, 200, 200));
+            }
 
-        if o.trace && dir.name != traced {
-            traced = dir.name.clone();
+            let out = cv.flush();
+            bytes += out.len() as u64;
+            match &v.term {
+                Some(tm) => tm.write(out.as_bytes()),
+                None => term::write_all(out.as_bytes()),
+            }
+        }
+        // erased in black, which Konsole's own background isn't; again when resized
+        for (tm, at) in &mut blanks {
+            let size = term::size_of(tm.fd);
+            if size != *at {
+                *at = size;
+                tm.write(if o.truecolor { b"\x1b[48;2;0;0;0m\x1b[2J" } else { b"\x1b[48;5;16m\x1b[2J" });
+            }
+        }
+        if o.trace && views[0].dir.name != traced {
+            traced = views[0].dir.name.clone();
             eprintln!("{t:7.2} theme {traced} (int {:.2})", f.intensity);
         }
-        let out = cv.flush();
-        bytes += out.len() as u64;
-        term::write_all(out.as_bytes());
         busy += t0.elapsed();
         frames += 1;
         if o.frames.is_some_and(|n| frames >= n) {
@@ -567,6 +663,9 @@ fn main() {
     // past lock_after the lock screen comes up under the last frame first
     if dismissed && o.cfg.locks(o.now, boot_secs() - since) {
         launch::lock_session(&o.cfg, &watcher.locked);
+    }
+    if let Some(x) = &extra {
+        x.end();
     }
     term.restore();
     // a fade cut short by the exit still pauses and restores the volume

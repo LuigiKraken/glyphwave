@@ -53,6 +53,16 @@ shows, make a profile without them in Konsole and name it in
 konsole_profile = MyProfile
 ```
 
+More than one screen: with `screens = all` (or `main`, which turns the
+other screens black) glyphwave opens one more terminal per screen and loads
+a small KWin script over D-Bus (`org.kde.KWin /Scripting loadScript`) that
+puts each window, by its pid, fullscreen on its screen. Screen 0 is the
+primary one from System Settings > Display. The script lives in
+`$XDG_RUNTIME_DIR` and is unloaded when glyphwave ends; nothing in KDE's
+files changes for it. Konsole is started with `--separate` so each window
+has a process, and so a pid, of its own. GNOME Terminal can't be told apart
+this way, so with it glyphwave stays on one screen.
+
 glyphwave exits by itself when the KDE locker comes up (it watches
 `org.freedesktop.ScreenSaver` on the session bus), so no lock hook is needed.
 

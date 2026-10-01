@@ -5,7 +5,7 @@
 //! root: it only writes to the home folder, lists every change first, and
 //! keeps the originals so `--remove` puts them back exactly.
 
-use crate::config::{self, Config, Dim, Then, Times};
+use crate::config::{self, Config, Dim, Screens, Then, Times};
 use crate::launch;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -127,7 +127,8 @@ fn summary(c: &Config) -> String {
         (true, None) => "on battery too".to_string(),
         (true, Some(b)) => format!("on battery {}", t(b)),
     };
-    format!("{}; {}; dim {}; {bat}; banner {}", t(c.ac), wake(c.lock_after), c.dim.name(), c.banner.as_deref().unwrap_or("(default)"))
+    let screens = if crate::screens::count() > 1 { format!("; screens {}", c.screens.name()) } else { String::new() };
+    format!("{}; {}; dim {}; {bat}; banner {}{screens}", t(c.ac), wake(c.lock_after), c.dim.name(), c.banner.as_deref().unwrap_or("(default)"))
 }
 
 fn wake(lock_after: Option<u32>) -> String {
@@ -200,9 +201,12 @@ fn questions(mut c: Config, d: Desktop) -> Config {
         Some("name") => "name",
         _ => "text",
     };
+    // more than one screen, and glyphwave can put a window on each
+    let screens = crate::screens::count();
+    let placeable = crate::screens::unplaceable(Some(d), launch::terminal(&c).as_deref()).is_none();
     let mut asked: Vec<usize> = Vec::new();
     let mut i = 0;
-    while i < 11 {
+    while i < 12 {
         let r = match i {
             0 => {
                 banner_help();
@@ -214,9 +218,13 @@ fn questions(mut c: Config, d: Desktop) -> Config {
                 })
             }
             1 if kind == "text" => ask_text(&mut c),
-            2 => ask_start(&mut c.ac, ""),
-            3 => ask_run(&mut c.ac, ""),
-            4 => {
+            2 if screens > 1 && placeable => {
+                let q = format!("You have {screens} screens: run on all of them, or just the main one (the others go black)? all or main");
+                ask_step(&q, c.screens.name(), "all or main", Screens::parse).map(|v| c.screens = v)
+            }
+            3 => ask_start(&mut c.ac, ""),
+            4 => ask_run(&mut c.ac, ""),
+            5 => {
                 let def = c.lock_after.map_or("never".to_string(), |m| if m == 0 { "always".to_string() } else { m.to_string() });
                 let q = "If you come back while it's running, show the lock screen? never, always, or after N min";
                 ask_step(q, &def, "never, always, or a number of minutes", |a| match a {
@@ -226,8 +234,8 @@ fn questions(mut c: Config, d: Desktop) -> Config {
                 })
                 .map(|v| c.lock_after = v)
             }
-            5 if c.ac.then != Then::Nothing => ask_then(&mut c.ac, ""),
-            6 => {
+            6 if c.ac.then != Then::Nothing => ask_then(&mut c.ac, ""),
+            7 => {
                 let def = match (c.on_battery, own) {
                     (false, _) => "off",
                     (true, false) => "same",
@@ -248,10 +256,10 @@ fn questions(mut c: Config, d: Desktop) -> Config {
                     own = a == "different";
                 })
             }
-            7 if own => ask_start(&mut bat, " (on battery)"),
-            8 if own => ask_run(&mut bat, " (on battery)"),
-            9 if own && bat.then != Then::Nothing => ask_then(&mut bat, " (on battery)"),
-            10 if d == Desktop::Kde => {
+            8 if own => ask_start(&mut bat, " (on battery)"),
+            9 if own => ask_run(&mut bat, " (on battery)"),
+            10 if own && bat.then != Then::Nothing => ask_then(&mut bat, " (on battery)"),
+            11 if d == Desktop::Kde => {
                 if c.on_battery {
                     let q = "Dim the screen while it runs? yes, no, or battery (only on battery)";
                     ask_step(q, c.dim.name(), "yes, no or battery", Dim::parse).map(|v| c.dim = v)
@@ -947,6 +955,10 @@ fn setup(desktop: Option<Desktop>, dry: bool) -> i32 {
         if let Some(a) = then.filter(|&a| a <= m) {
             p.notes.push(format!("It locks after running {a} min anyway, so \"after {m} min\" for waking it never comes into play."));
         }
+    }
+    let n = crate::screens::count();
+    if let Some(why) = crate::screens::unplaceable(Some(d), launch::terminal(&cfg).as_deref()).filter(|_| n > 1) {
+        p.notes.push(format!("You have {n} screens, but glyphwave runs on one of them, the one the desktop picks, and the others stay as they are: {why}."));
     }
     if [cfg.ac, cfg.bat()].iter().any(|t| t.then == Then::Sleep) {
         p.notes.push(match d {
