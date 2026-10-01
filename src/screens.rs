@@ -116,6 +116,8 @@ pub struct Extra {
     /// label → the terminal's pid (when glyphwave started it itself), while
     /// its stub hasn't shown up
     want: Vec<(String, Option<i32>)>,
+    /// the stubs that showed up, closed first at the end
+    stubs: Vec<i32>,
     since: Instant,
     scanned: Instant,
     kwin: bool,
@@ -179,7 +181,7 @@ impl Extra {
         }
         let now = Instant::now();
         let plugged = connectors().into_iter().map(|c| c.0).collect();
-        Some(Extra { want, since: now, scanned: now, kwin, plugged, checked: now })
+        Some(Extra { want, stubs: Vec::new(), since: now, scanned: now, kwin, plugged, checked: now })
     }
 
     /// Stubs that showed up since the last call: their label and terminal,
@@ -198,6 +200,7 @@ impl Extra {
             let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC) };
             if fd >= 0 && unsafe { libc::isatty(fd) } == 1 {
                 got.push((self.want.remove(i).0, fd));
+                self.stubs.push(pid);
             }
         }
         // a terminal whose stub never came: close it rather than leave it;
@@ -226,7 +229,16 @@ impl Extra {
         now != self.plugged
     }
 
+    /// The other screens' windows close first, and glyphwave's own last, so
+    /// the desktop gives the focus back to the window that had it before.
     pub fn end(&self) {
+        for &p in &self.stubs {
+            unsafe { libc::kill(p, libc::SIGTERM) };
+        }
+        let until = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < until && self.stubs.iter().any(|p| std::path::Path::new(&format!("/proc/{p}")).exists()) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
         if self.kwin {
             if let Ok(c) = zbus::blocking::Connection::session() {
                 let _ = c.call_method(Some("org.kde.KWin"), "/Scripting", Some("org.kde.kwin.Scripting"), "unloadScript", &(KWIN_SCRIPT));
@@ -254,8 +266,9 @@ fn script_path() -> String {
 }
 
 /// A KWin script that puts each window, by its pid, fullscreen on its screen
-/// in KWin's order (0 = the primary one), now and as they open. It stays
-/// loaded until glyphwave ends.
+/// in KWin's order (0 = the primary one), now and as they open. Kept above
+/// too: KWin lifts a fullscreen window over the panel only while it has the
+/// focus, and only one of them can. It stays loaded until glyphwave ends.
 fn kwin_place(map: &str) -> zbus::Result<()> {
     let js = format!(
         "var want = {{{map}}};\n\
@@ -264,6 +277,14 @@ fn kwin_place(map: &str) -> zbus::Result<()> {
          \x20   if (i === undefined || !o || !w.normalWindow) return;\n\
          \x20   if (w.output.name !== o.name) {{ w.fullScreen = false; workspace.sendClientToScreen(w, o); }}\n\
          \x20   w.fullScreen = true;\n\
+         \x20   w.keepAbove = true; // over the panel, also when another screen's window has the focus\n\
+         }}\n\
+         // the focus stays on glyphwave's own window (it reads every screen's\n\
+         // keys anyway), so when it closes the focus goes back where it was\n\
+         function keep(w) {{\n\
+         \x20   if (!w || !(want[w.pid] > 0)) return;\n\
+         \x20   var m = workspace.windowList().filter(function (m) {{ return want[m.pid] === 0; }})[0];\n\
+         \x20   if (m) workspace.activeWindow = m;\n\
          }}\n\
          // the main window gone means the run is over: stop placing, so a\n\
          // script a crash left loaded can't catch a later window\n\
@@ -271,10 +292,13 @@ fn kwin_place(map: &str) -> zbus::Result<()> {
          \x20   if (want[w.pid] !== 0) return;\n\
          \x20   workspace.windowAdded.disconnect(place);\n\
          \x20   workspace.windowRemoved.disconnect(gone);\n\
+         \x20   workspace.windowActivated.disconnect(keep);\n\
          }}\n\
          workspace.windowList().forEach(place);\n\
          workspace.windowAdded.connect(place);\n\
-         workspace.windowRemoved.connect(gone);\n"
+         workspace.windowRemoved.connect(gone);\n\
+         workspace.windowActivated.connect(keep);\n\
+         keep(workspace.activeWindow);\n"
     );
     // KWin reads it in the background, so it stays until glyphwave ends
     let path = script_path();
