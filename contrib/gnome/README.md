@@ -39,3 +39,8 @@ its path goes into `org.gnome.settings-daemon.plugins.media-keys
 custom-keybindings`, with `name`, `command` and `binding` under
 `.../custom-keybindings/glyphwave/`. It shows in Settings > Keyboard >
 Custom Shortcuts; `--remove` puts the list back as it was.
+
+Fedora: Workstation (GNOME) and the KDE spin should need nothing extra, but
+that is still to be tried on a real Fedora install. The binary in
+`~/.local/bin` also suits Silverblue and the other Atomic variants, where
+`/usr` is read-only.
