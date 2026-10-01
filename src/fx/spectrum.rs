@@ -82,7 +82,7 @@ impl Spectrum {
             }
             let cp = (self.capv[j] * steps as f32) as usize;
             if cp > 16 {
-                let y = base as i32 - 1 - ((cp + 7) / 8) as i32;
+                let y = base as i32 - 1 - cp.div_ceil(8) as i32;
                 for dx in 0..self.bar_w as i32 {
                     cv.put_under(bx + dx, y, '▁', cap_col);
                 }

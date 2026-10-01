@@ -115,14 +115,14 @@ pub fn wakes(mut b: &[u8]) -> bool {
 /// and rxvt numbering, ESC [ [ A..E (Linux console).
 fn fkey_len(b: &[u8]) -> Option<usize> {
     match b {
-        [0x1b, b'O', b'P'..=b'S', ..] => return Some(3),
-        [0x1b, b'[', b'[', b'A'..=b'E', ..] => return Some(4),
-        [0x1b, b'[', b'1', b';', b'0'..=b'9', b'P'..=b'S', ..] => return Some(6),
+        [0x1b, b'O', b'P'..=b'S', ..] => Some(3),
+        [0x1b, b'[', b'[', b'A'..=b'E', ..] => Some(4),
+        [0x1b, b'[', b'1', b';', b'0'..=b'9', b'P'..=b'S', ..] => Some(6),
         [0x1b, b'[', rest @ ..] => {
             let end = rest.iter().position(|&c| !(c.is_ascii_digit() || c == b';'))?;
             let n: u32 = std::str::from_utf8(&rest[..end]).ok()?.split(';').next()?.parse().ok()?;
             let fkey = matches!(n, 11..=15 | 17..=21 | 23 | 24);
-            return (rest[end] == b'~' && fkey).then_some(end + 3);
+            (rest[end] == b'~' && fkey).then_some(end + 3)
         }
         _ => None,
     }

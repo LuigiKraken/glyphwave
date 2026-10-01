@@ -80,6 +80,7 @@ impl Rgb {
         self.0 < 3 && self.1 < 3 && self.2 < 3
     }
 
+    #[allow(clippy::excessive_precision)] // the reference matrices, as published
     pub fn to_lab(self) -> Lab {
         let f = |c: u8| {
             let c = c as f32 / 255.0;
@@ -105,6 +106,7 @@ pub struct Lab {
 }
 
 impl Lab {
+    #[allow(clippy::excessive_precision)]
     pub fn to_rgb(self) -> Rgb {
         let l = self.l + 0.3963377774 * self.a + 0.2158037573 * self.b;
         let m = self.l - 0.1055613458 * self.a - 0.0638541728 * self.b;
