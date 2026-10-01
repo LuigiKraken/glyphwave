@@ -1098,7 +1098,7 @@ mod tests {
         let t = timeline(&c, Desktop::Kde);
         assert_eq!(t[0], "Plugged in: Idle for 5 min → glyphwave runs for 10 min → then it locks.");
         assert_eq!(t[1], "On battery: Idle for 5 min → glyphwave runs dimmed for 10 min → then it locks.");
-        // only KDE dims, so elsewhere it's one line
+        // only KDE dims, so elsewhere one line plus the wake line
         assert_eq!(timeline(&c, Desktop::Gnome).len(), 2);
         let c = Config { dim: Dim::No, ..c };
         assert_eq!(timeline(&c, Desktop::Kde)[0], "Idle for 5 min → glyphwave runs for 10 min → then it locks.");
