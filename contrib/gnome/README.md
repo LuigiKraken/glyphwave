@@ -30,3 +30,12 @@ Sleep while music plays: players hold off sleep while they play. When they
 let go, gnome-settings-daemon sets its sleep timer again, counted from your
 last input, so if you've been away longer than the timeout it sleeps right
 away. (An app that holds off idle instead, like a video, restarts the count.)
+
+Starting it by hand: a video, or music in some players, holds off idle, so
+the screensaver never starts on its own. Setup adds an app-menu entry
+(`~/.local/share/applications/glyphwave.desktop`, pin it to the dock) and a
+custom shortcut, `shortcut` in the config (Meta+Shift+V, `<Super><Shift>v`):
+its path goes into `org.gnome.settings-daemon.plugins.media-keys
+custom-keybindings`, with `name`, `command` and `binding` under
+`.../custom-keybindings/glyphwave/`. It shows in Settings > Keyboard >
+Custom Shortcuts; `--remove` puts the list back as it was.
