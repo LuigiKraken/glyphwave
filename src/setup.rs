@@ -93,9 +93,9 @@ fn ask_start(t: &mut Times, what: &str) -> Option<()> {
 }
 
 /// How long it runs; forever means nothing comes after it.
-fn ask_run(t: &mut Times) -> Option<()> {
+fn ask_run(t: &mut Times, what: &str) -> Option<()> {
     let def = if t.then == Then::Nothing { "forever".to_string() } else { t.after.to_string() };
-    let run = ask_step("Run for how many minutes? (forever keeps it up)", &def, "a number, 1 or more, or forever", |a| match a {
+    let run = ask_step(&format!("Run for how many minutes{what}? (forever keeps it up)"), &def, "a number, 1 or more, or forever", |a| match a {
         "forever" | "none" => Some(None),
         _ => mins(a).map(Some),
     })?;
@@ -104,16 +104,16 @@ fn ask_run(t: &mut Times) -> Option<()> {
         Some(m) => {
             t.after = m;
             if t.then == Then::Nothing {
-                t.then = Then::Lock;
+                t.then = Then::Sleep;
             }
         }
     }
     Some(())
 }
 
-fn ask_then(t: &mut Times) -> Option<()> {
-    let q = format!("When it's done running for {} min: lock, screen-off or sleep?", t.after);
-    t.then = ask_step(&q, t.then.name(), "lock, screen-off or sleep", |a| Then::parse(a).filter(|&t| t != Then::Nothing))?;
+fn ask_then(t: &mut Times, what: &str) -> Option<()> {
+    let q = format!("When it's done running for {} min{what}: sleep, lock or screen-off?", t.after);
+    t.then = ask_step(&q, t.then.name(), "sleep, lock or screen-off", |a| Then::parse(a).filter(|&t| t != Then::Nothing))?;
     Some(())
 }
 
@@ -138,57 +138,127 @@ fn wake(lock_after: Option<u32>) -> String {
     }
 }
 
+/// The distro's name from os-release, for the banner question.
+fn distro() -> Option<String> {
+    let t = std::fs::read_to_string("/etc/os-release").ok()?;
+    let v = t.lines().find_map(|l| l.strip_prefix("NAME="))?;
+    Some(v.trim_matches('"').to_string()).filter(|v| !v.is_empty())
+}
+
+/// What each banner choice shows, with this machine's own logo tool and name.
+fn banner_help() {
+    let logo = distro().map_or("your distro's logo".to_string(), |d| format!("{d}'s logo"));
+    let logo = match ["fastfetch", "neofetch"].into_iter().find(|t| launch::installed(t)) {
+        Some(t) => format!("{logo}, the one {t} shows (a custom {t} logo shows up too)"),
+        None => format!("{logo} (install fastfetch to get it; until then it shows the name)"),
+    };
+    println!("The banner is the picture glyphwave animates:");
+    println!("  logo  {logo}");
+    println!("  name  this computer's name, {}, in big letters", crate::art::hostname());
+    println!("  text  your own words in big letters, or your own art from a text file");
+}
+
+/// `text`'s follow-up: a file that exists is used as art, anything else is
+/// the words to show. None goes back.
+fn ask_text(c: &mut Config) -> Option<()> {
+    let def = match c.banner.as_deref() {
+        Some(b) if b.starts_with("text:") => b[5..].to_string(),
+        Some("logo" | "name") | None => {
+            let own = PathBuf::from(crate::art::own_banner());
+            if own.is_file() { tilde(&own) } else { "glyphwave".to_string() }
+        }
+        Some(b) => b.to_string(),
+    };
+    loop {
+        // asked as typed: a path keeps its case
+        let a = ask("Type the text, or the path to a text file with your own art:", &def);
+        if a == "b" {
+            return None;
+        }
+        let path = a.strip_prefix("~/").map_or(PathBuf::from(&a), |r| home().join(r));
+        if path.is_file() {
+            c.banner = Some(a);
+            return Some(());
+        }
+        if a.contains('/') {
+            println!("  no file at {a}; type words, or the path to a file that exists, or b to go back");
+            continue;
+        }
+        c.banner = Some(format!("text:{a}"));
+        return Some(());
+    }
+}
+
 /// The questions in the order things happen; `b` steps back through the
 /// ones that were asked.
 fn questions(mut c: Config, d: Desktop) -> Config {
-    println!("Answers in [brackets] are the default; b goes back a question.");
+    println!("Answers in [brackets] are the default; b goes back a question.\n");
     let mut own = c.battery.is_some();
     let mut bat = c.bat();
+    let mut kind = match c.banner.as_deref() {
+        None | Some("logo") => "logo",
+        Some("name") => "name",
+        _ => "text",
+    };
     let mut asked: Vec<usize> = Vec::new();
     let mut i = 0;
-    while i < 10 {
+    while i < 11 {
         let r = match i {
-            0 => ask_start(&mut c.ac, ""),
-            1 => ask_run(&mut c.ac),
-            2 if c.ac.then != Then::Nothing => ask_then(&mut c.ac),
-            3 if d == Desktop::Kde => {
-                let q = "Dim the screen while it runs? yes, no, or battery (only on battery)";
-                ask_step(q, c.dim.name(), "yes, no or battery", Dim::parse).map(|v| c.dim = v)
+            0 => {
+                banner_help();
+                ask_step("Banner: logo, name or text?", kind, "logo, name or text", |a| ["logo", "name", "text"].into_iter().find(|&k| k == a)).map(|k| {
+                    kind = k;
+                    if k != "text" {
+                        c.banner = Some(k.to_string());
+                    }
+                })
             }
+            1 if kind == "text" => ask_text(&mut c),
+            2 => ask_start(&mut c.ac, ""),
+            3 => ask_run(&mut c.ac, ""),
             4 => {
                 let def = c.lock_after.map_or("never".to_string(), |m| if m == 0 { "always".to_string() } else { m.to_string() });
-                let q = "When you wake it, go to the lock screen? always, never, or after N min";
-                ask_step(q, &def, "always, never, or a number of minutes", |a| match a {
+                let q = "If you come back while it's running, show the lock screen? never, always, or after N min";
+                ask_step(q, &def, "never, always, or a number of minutes", |a| match a {
                     "always" | "0" => Some(Some(0)),
                     "never" | "none" => Some(None),
                     _ => a.trim_start_matches("after").trim_end_matches("min").trim().parse().ok().map(Some),
                 })
                 .map(|v| c.lock_after = v)
             }
-            5 => {
+            5 if c.ac.then != Then::Nothing => ask_then(&mut c.ac, ""),
+            6 => {
                 let def = match (c.on_battery, own) {
-                    (false, _) => "no",
-                    (true, false) => "yes",
-                    _ => "own",
+                    (false, _) => "off",
+                    (true, false) => "same",
+                    _ => "different",
                 };
-                ask_step("On battery too? yes, no, or own (other times)", def, "yes, no or own", |a| {
-                    ["yes", "no", "own"].contains(&a).then(|| a.to_string())
+                let q = "On battery: same as plugged in, off, or different times?";
+                ask_step(q, def, "same, off or different", |a| match a {
+                    "same" | "yes" => Some("same"),
+                    "off" | "no" => Some("off"),
+                    "different" | "own" => Some("different"),
+                    _ => None,
                 })
                 .map(|a| {
-                    if a == "own" && !own {
+                    if a == "different" && !own {
                         bat = c.ac;
                     }
-                    c.on_battery = a != "no";
-                    own = a == "own";
+                    c.on_battery = a != "off";
+                    own = a == "different";
                 })
             }
-            6 if own => ask_start(&mut bat, " on battery"),
-            7 if own => ask_run(&mut bat),
-            8 if own && bat.then != Then::Nothing => ask_then(&mut bat),
-            9 => {
-                // asked as typed: a path keeps its case
-                let a = ask("Banner: logo, name, or the path to a text file?", c.banner.as_deref().unwrap_or("logo"));
-                (a != "b").then(|| c.banner = Some(a))
+            7 if own => ask_start(&mut bat, " (on battery)"),
+            8 if own => ask_run(&mut bat, " (on battery)"),
+            9 if own && bat.then != Then::Nothing => ask_then(&mut bat, " (on battery)"),
+            10 if d == Desktop::Kde => {
+                if c.on_battery {
+                    let q = "Dim the screen while it runs? yes, no, or battery (only on battery)";
+                    ask_step(q, c.dim.name(), "yes, no or battery", Dim::parse).map(|v| c.dim = v)
+                } else {
+                    let def = if c.dim == Dim::Yes { "yes" } else { "no" };
+                    ask_step("Dim the screen while it runs? yes or no", def, "yes or no", |a| Dim::parse(a).filter(|&v| v != Dim::Battery)).map(|v| c.dim = v)
+                }
             }
             _ => {
                 i += 1;

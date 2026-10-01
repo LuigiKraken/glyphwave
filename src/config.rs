@@ -94,7 +94,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Config {
         Config {
-            ac: Times { start: 5, then: Then::Lock, after: 10 },
+            ac: Times { start: 5, then: Then::Sleep, after: 10 },
             on_battery: true,
             battery: None,
             banner: None,
@@ -255,7 +255,7 @@ impl Config {
         s += &format!("dim = {}                   # dim the screen while it runs: yes, no or battery (KDE)\n", self.dim.name());
         match &self.banner {
             Some(b) => s += &format!("banner = {b}\n"),
-            None => s += "# banner = logo         # logo, name, or a path to a text file\n",
+            None => s += "# banner = logo         # logo, name, text:<your words>, or a path to a text file\n",
         }
         s += &format!("fps = {}\n", self.fps.unwrap_or(30.0));
         match &self.ringtone {

@@ -50,7 +50,8 @@ USAGE: glyphwave [options]
   --fps N           frame rate (default 30)
   --colors MODE     truecolor or 256 (default: from COLORTERM / TERM)
   --banner SRC      logo (what fastfetch or neofetch shows), name (the host
-                    name in big letters) or a text file (default: your own
+                    name in big letters), text:WORDS (your words in big
+                    letters) or a text file (default: your own
                     ~/.config/glyphwave/banner.txt, else logo, else name)
   --frames N        exit after N frames (testing)
   --size WxH        render size when stdout isn't a terminal (testing)
@@ -150,7 +151,7 @@ fn opts() -> Opts {
             "--banner" => match args.next() {
                 Some(v) if !v.is_empty() => o.banner = Some(v),
                 _ => {
-                    eprintln!("glyphwave: --banner takes logo, name or a file");
+                    eprintln!("glyphwave: --banner takes logo, name, text:WORDS or a file");
                     std::process::exit(2);
                 }
             },

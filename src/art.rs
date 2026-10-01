@@ -1,7 +1,8 @@
 //! Where the banner comes from: the system logo (what fastfetch or
 //! neofetch shows), the machine's name in big block letters, or the user's
-//! own art. `--banner` and the config file's `banner =` take the same three
-//! forms, `logo`, `name` or a path, and both go through `resolve`.
+//! own words in the same letters, or own art. `--banner` and the config
+//! file's `banner =` take the same forms, `logo`, `name`, `text:<words>` or
+//! a path, and both go through `resolve`.
 //!
 //! Every source comes back as plain text: colours are stripped, since the
 //! banner wears glyphwave's own palette.
@@ -13,6 +14,8 @@ use std::process::{Command, Stdio};
 pub enum Source {
     Logo,
     Name,
+    /// own words, in the name's big letters
+    Text(String),
     File(String),
     /// `--test`'s stand-in for own art when there's no banner.txt.
     Sample,
@@ -33,6 +36,7 @@ impl fmt::Display for Source {
         match self {
             Source::Logo => f.write_str("logo"),
             Source::Name => f.write_str("name"),
+            Source::Text(t) => write!(f, "text:{t}"),
             Source::File(p) => f.write_str(p),
             Source::Sample => f.write_str("sample"),
         }
@@ -40,11 +44,13 @@ impl fmt::Display for Source {
 }
 
 impl Source {
-    /// `logo`, `name`, or a path (a leading `~/` is the home directory).
+    /// `logo`, `name`, `text:<words>`, or a path (a leading `~/` is the home
+    /// directory).
     pub fn parse(spec: &str) -> Source {
         match spec.trim() {
             "logo" => Source::Logo,
             "name" => Source::Name,
+            t if t.starts_with("text:") => Source::Text(t[5..].trim().to_string()),
             p => match p.strip_prefix("~/") {
                 Some(rest) => Source::File(format!("{}/{rest}", home())),
                 None => Source::File(p.to_string()),
@@ -58,6 +64,7 @@ impl Source {
         let t = match self {
             Source::Logo => run("fastfetch", &["-s", "none", "--pipe", "false"]).or_else(|| run("neofetch", &["-L"])),
             Source::Name => Some(big(&hostname())),
+            Source::Text(t) => Some(big(t)),
             Source::File(p) => std::fs::read_to_string(p).ok().map(|s| strip_ansi(&s)),
             Source::Sample => Some(SAMPLE.to_string()),
         };
@@ -193,13 +200,18 @@ pub fn strip_ansi(s: &str) -> String {
 }
 
 /// `name` in big block letters, like `toilet -f bigmono12`. Letters are
-/// case-blind; characters the font lacks are skipped.
+/// case-blind; a space is half a letter wide; other characters the font
+/// lacks are skipped.
 pub fn big(name: &str) -> String {
-    let idx: Vec<usize> = name.chars().filter_map(|c| ORDER.find(c.to_ascii_lowercase())).collect();
+    let idx: Vec<Option<usize>> =
+        name.chars().filter_map(|c| if c == ' ' { Some(None) } else { ORDER.find(c.to_ascii_lowercase()).map(Some) }).collect();
     let mut s = String::new();
     for r in 0..ROWS {
         for &k in &idx {
-            s.extend(SHEET[k / 8 * ROWS + r].chars().skip(k % 8 * W).take(W));
+            match k {
+                Some(k) => s.extend(SHEET[k / 8 * ROWS + r].chars().skip(k % 8 * W).take(W)),
+                None => s.extend(std::iter::repeat_n(' ', W / 2)),
+            }
         }
         s.push('\n');
     }
@@ -340,5 +352,14 @@ mod tests {
         assert_eq!(Source::parse("/a/b.txt"), Source::File("/a/b.txt".into()));
         assert_eq!(Source::parse("~/x.txt"), Source::File(format!("{}/x.txt", home())));
         assert_eq!(resolve(Some("name")).0, Source::Name);
+    }
+
+    #[test]
+    fn text_banner() {
+        let s = Source::parse("text:Hi there");
+        assert_eq!(s, Source::Text("Hi there".into()));
+        assert_eq!(Source::parse(&s.to_string()), s);
+        // a space is half a letter: 2 + 5 letters at 10 columns, plus 5
+        assert_eq!(s.text().unwrap().lines().map(|l| l.chars().count()).max(), Some(75));
     }
 }

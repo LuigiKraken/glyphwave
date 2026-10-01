@@ -24,13 +24,14 @@ mouse and it's gone.
    track instead of your music and adds keys for every theme and a fake
    call.
 
-3. Run `glyphwave setup`. It asks in the order things happen: how long
-   you're idle before it starts, how long it runs (or forever), and what
-   comes after that (lock, screen off or sleep). Then whether the screen
-   dims while it runs, whether waking it takes you to the lock screen, whether
-   it runs on battery, and which banner to use. `b` goes back a question.
-   Before it changes anything it sums up your answers in one line, such as
-   "Idle for 5 min → glyphwave runs for 10 min → then it locks". Then it hooks itself
+3. Run `glyphwave setup`. It first asks for the banner: your distro's logo,
+   your computer's name, or your own text. Then it asks in the order things
+   happen: how long you're idle before it starts, how long it runs (or
+   forever), whether coming back while it runs shows the lock screen, and
+   what comes after the run (sleep, lock or screen off). Then whether it runs
+   on battery, and whether the screen dims while it runs. `b` goes back a
+   question. Before it changes anything it sums up your answers in one line,
+   such as "Idle for 5 min → glyphwave runs for 10 min → then it sleeps". Then it hooks itself
    into your desktop's own idle timer (KDE, GNOME, Hyprland, sway or X11). It
    lists every file it will change before it writes anything, and
    `glyphwave setup --remove` puts them all back. It never needs root and
@@ -76,8 +77,8 @@ the call and brings the music back. glyphwave reads the desktop's call
 notification. It never answers or dismisses anything itself.
 
 The banner is your distro's logo as fastfetch or neofetch draws it, your
-hostname in big letters, or any text you put in
-`~/.config/glyphwave/banner.txt`. The GIF above uses a banner file.
+hostname in big letters, your own words in the same letters, or any art you
+put in `~/.config/glyphwave/banner.txt`. The GIF above uses a banner file.
 
 ## Keys
 

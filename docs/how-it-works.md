@@ -109,9 +109,9 @@ hooks in, and the research it builds on.
   elsewhere), like a phone.
 - **The banner** is your system's logo (whatever fastfetch or neofetch
   shows, in glyphwave's colours), your machine's name in big block letters,
-  or your own art in `~/.config/glyphwave/banner.txt`. It uses your own art
-  if it's there, else the logo, else the name; `--banner logo|name|FILE`
-  picks one, and `l` cycles through them. Art too big for the screen steps
+  your own words in the same letters (`text:WORDS`), or your own art in
+  `~/.config/glyphwave/banner.txt`. It uses your own art if it's there, else
+  the logo, else the name; `--banner logo|name|text:WORDS|FILE` picks one, and `l` cycles through them. Art too big for the screen steps
   down to the name.
 - **A test mode.** `glyphwave --test` runs the demo track in the current
   terminal with the debug line. `1`–`0` jump to a theme (through the normal
@@ -165,10 +165,13 @@ It never needs root and never installs packages. It only writes to your home
 folder, keeps the originals, and `glyphwave setup --remove` puts everything
 back.
 
-The questions follow the order things happen: idle minutes before it starts
-(`start_after`), how long it runs (`then_after`, or `forever` for
-`then = none`), what comes after (`then`), whether the screen dims while it
-runs (`dim`, KDE), whether waking it locks (`lock_after`), battery, banner.
+The first question is the banner (`logo`, `name` or `text`; `text` takes
+your words or the path to your own art). The rest follow the order things
+happen: idle minutes before it starts (`start_after`), how long it runs
+(`then_after`, or `forever` for `then = none`), whether coming back while it
+runs shows the lock screen (`lock_after`), what comes after the run (`then`,
+sleep by default), battery (the same times, off, or different times asked
+again), and whether the screen dims while it runs (`dim`, KDE).
 `b` goes back a question. Before the list of changes it prints the answers as
 a timeline in which each step counts from the one before. Sleep shows
 whether the computer comes back locked: on KDE that's Lock after waking from
