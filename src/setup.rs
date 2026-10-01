@@ -918,7 +918,7 @@ fn setup(desktop: Option<Desktop>, dry: bool) -> i32 {
         eprintln!("glyphwave: can't tell which desktop this is; say it with --desktop kde|gnome|hyprland|sway|x11");
         return 1;
     };
-    println!("Desktop: {}", desktop_name(d));
+    println!("glyphwave {} setup for {}", env!("CARGO_PKG_VERSION"), desktop_name(d));
     let mut m = Manifest::load();
     let cfg = match config::load() {
         Some(c) => {
@@ -1102,6 +1102,18 @@ mod tests {
         assert_eq!(ini_set("", "Daemon", "Timeout", Some("15")), "[Daemon]\nTimeout=15\n");
         // a key that only shares a prefix is a different key
         assert_eq!(ini_get("[A]\nTimeoutSec=1\n", "A", "Timeout"), None);
+    }
+
+    #[test]
+    fn dims_on_battery_by_default() {
+        let c = Config { ac: Times { start: 5, then: Then::Lock, after: 10 }, ..Config::default() };
+        let t = timeline(&c, Desktop::Kde);
+        assert_eq!(t[0], "Plugged in: Idle for 5 min → glyphwave runs for 10 min → then it locks.");
+        assert_eq!(t[1], "On battery: Idle for 5 min → glyphwave runs dimmed for 10 min → then it locks.");
+        // only KDE dims, so elsewhere one line plus the wake line
+        assert_eq!(timeline(&c, Desktop::Gnome).len(), 2);
+        let c = Config { dim: Dim::No, ..c };
+        assert_eq!(timeline(&c, Desktop::Kde)[0], "Idle for 5 min → glyphwave runs for 10 min → then it locks.");
     }
 
     #[test]

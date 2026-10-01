@@ -31,11 +31,11 @@ sits at the screensaver's start plus the extra minutes:
 | lock | `kscreenlockerrc`, `[Daemon]` (both power states) | `Autolock=true`, `Timeout=15` (minutes) |
 
 Dimming is set in each profile glyphwave runs in, because a dim at KDE's own
-time would dim it partway through or before it starts. `dim = no` (the
-default) sets `[AC][Display] DimDisplayWhenIdle=false`. `dim = yes` sets
+time would dim it partway through or before it starts. `dim = no` sets
+`[AC][Display] DimDisplayWhenIdle=false`. `dim = yes` sets
 `DimDisplayWhenIdle=true` with `DimDisplayIdleTimeoutSec` at the screensaver's
-start, so it runs dimmed from the first frame. `dim = battery` does that only
-under `[Battery]`.
+start, so it runs dimmed from the first frame. `dim = battery` (the default)
+does that only under `[Battery]`, and sets `[AC]` like `dim = no`.
 
 A key missing from the file means Plasma's default, and those fire early:
 screen off after 10 min (5 on battery), sleep after 15 (10 on battery), lock
@@ -43,10 +43,13 @@ after 5. Anything at or before the screensaver's start hides or ends it;
 setup warns about each one. After
 editing the lock timer by hand, `qdbus6 org.freedesktop.ScreenSaver /ScreenSaver configure`.
 
-glyphwave turns the terminal background black itself (OSC 11); a terminal
-that ignores that keeps its own background. If Konsole's scrollbar or margin
-shows, make a profile without them in Konsole and name it in
-`~/.config/glyphwave/config`; `glyphwave launch` passes it on as `--profile`:
+`glyphwave launch` opens Konsole with no scrollbar and no margin
+(`-p ScrollBarPosition=2 -p TerminalMargin=0`) and in the built-in
+WhiteOnBlack colour scheme, so the strip where the screen isn't a whole
+number of character cells is black too. Konsole doesn't take glyphwave's
+OSC 11 there. For a profile of your own (a font, say), name it in
+`~/.config/glyphwave/config`; `glyphwave launch` passes it on as `--profile`
+and keeps its colours, still without scrollbar and margin:
 
 ```ini
 [terminal]
@@ -81,9 +84,9 @@ timeout after the music stops, not straight away.
 Starting it by hand: a video, or music in some players, holds off the idle
 timer, so the screensaver never starts on its own. Setup writes
 `~/.local/share/applications/glyphwave.desktop` (an app-menu entry you can
-pin to the panel) running `glyphwave launch --now` (woken, it locks at once
-when `lock_after` is set), with `X-KDE-Shortcuts=Meta+Ctrl+L` (`shortcut` in the
-config). kglobalacceld reads that key when the menu database is rebuilt, so
+pin to the panel) running `glyphwave launch --now` (a visualizer: waking it
+never locks, and it holds off KDE's lock timer, dimming and sleep until you
+stop it), with `X-KDE-Shortcuts=Meta+Ctrl+L` (`shortcut` in the config). kglobalacceld reads that key when the menu database is rebuilt, so
 setup runs `kbuildsycoca6` and the key works at once, with nothing written
 to `kglobalshortcutsrc`. If that file already gives the key to something
 else, setup binds none and says so; free it in System Settings > Keyboard >

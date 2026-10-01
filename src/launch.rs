@@ -88,18 +88,34 @@ pub fn quote(s: &str) -> String {
 pub fn command(term: &str, cfg: &Config, run: &[&str]) -> Option<Vec<String>> {
     let v = |a: &[&str]| a.iter().chain(run).map(|s| s.to_string()).collect();
     Some(match term {
-        "kitty" => v(&["kitty", "--class", "glyphwave", "--start-as=fullscreen", "-o", "background=#000000"]),
-        "foot" => v(&["foot", "--app-id=glyphwave", "--fullscreen", "-o", "colors.background=000000"]),
+        // No scrollbar or padding, a black background, and the pointer hidden
+        // where the terminal can do that without a key press.
+        "kitty" => v(&[
+            "kitty", "--class", "glyphwave", "--start-as=fullscreen", "-o", "background=#000000",
+            "-o", "window_padding_width=0", "-o", "mouse_hide_wait=1",
+        ]),
+        "foot" => v(&["foot", "--app-id=glyphwave", "--fullscreen", "-o", "colors.background=000000", "-o", "pad=0x0"]),
         "alacritty" => v(&[
             "alacritty", "--class", "glyphwave", "-o", "window.startup_mode=\"Fullscreen\"",
-            "-o", "colors.primary.background=\"#000000\"", "-e",
+            "-o", "colors.primary.background=\"#000000\"", "-o", "window.padding.x=0", "-o", "window.padding.y=0", "-e",
         ]),
-        "ghostty" => v(&["ghostty", "--gtk-single-instance=false", "--fullscreen=true", "--background=000000", "-e"]),
-        "wezterm" => v(&["wezterm", "start", "--always-new-process", "--class", "glyphwave", "--"]), // fullscreen via a window rule
+        "ghostty" => v(&[
+            "ghostty", "--gtk-single-instance=false", "--fullscreen=true", "--background=000000",
+            "--window-padding-x=0", "--window-padding-y=0", "-e",
+        ]),
+        "wezterm" => v(&[
+            "wezterm", "--config", "enable_scroll_bar=false", "--config", "window_padding={left=0,right=0,top=0,bottom=0}",
+            "start", "--always-new-process", "--class", "glyphwave", "--",
+        ]), // fullscreen via a window rule
         "konsole" => {
             let mut c = vec!["konsole".to_string(), "--separate".to_string()];
-            if let Some(p) = &cfg.konsole_profile {
-                c.extend(["--profile".to_string(), p.clone()]);
+            // No scrollbar or margin over any profile; black under the
+            // margin and the part-cell leftover unless the user's profile
+            // picks its own colours.
+            c.extend(["-p", "ScrollBarPosition=2", "-p", "TerminalMargin=0"].map(String::from));
+            match &cfg.konsole_profile {
+                Some(p) => c.extend(["--profile".to_string(), p.clone()]),
+                None => c.extend(["-p", "ColorScheme=WhiteOnBlack"].map(String::from)),
             }
             let rest = ["--fullscreen", "--hide-menubar", "--hide-tabbar", "--notransparency", "-e"];
             c.extend(rest.iter().chain(run).map(|s| s.to_string()));
@@ -108,14 +124,18 @@ pub fn command(term: &str, cfg: &Config, run: &[&str]) -> Option<Vec<String>> {
         // standalone, so the process lives as long as the window and holds the lock
         "ptyxis" => vec!["ptyxis".into(), "-s".into(), "--fullscreen".into(), "-x".into(), run.iter().map(|a| quote(a)).collect::<Vec<_>>().join(" ")],
         "gnome-terminal" => v(&["gnome-terminal", "--wait", "--full-screen", "--hide-menubar", "--"]),
-        "xterm" => v(&["xterm", "-class", "glyphwave", "-fullscreen", "-bg", "black", "-e"]),
+        // a black pointer on the black background
+        "xterm" => v(&[
+            "xterm", "-class", "glyphwave", "-fullscreen", "-bg", "black", "+sb", "-b", "0",
+            "-ms", "black", "-xrm", "*pointerColorBackground: black", "-e",
+        ]),
         _ => return None,
     })
 }
 
 /// `glyphwave launch [--stop] [--now] [--on-ac | --on-battery]`; --now is
-/// the start-now key and menu entry, after which waking it locks at once
-/// when lock_after is set.
+/// the start-now key and menu entry: a visualizer, which never locks when
+/// woken and keeps the desktop from dimming, locking or sleeping meanwhile.
 pub fn launch(args: &[String]) -> i32 {
     let has = |a: &str| args.iter().any(|x| x == a);
     if has("--stop") {
@@ -182,6 +202,67 @@ pub fn lock_session(cfg: &Config, bus_locked: &std::sync::atomic::AtomicBool) {
     }
 }
 
+/// Holds the desktop's idle timers off for a screensaver started by hand:
+/// org.freedesktop.ScreenSaver (KDE, hypridle), else GNOME's session
+/// manager. Let go on drop, or by the bus when the process dies.
+pub struct Awake(Option<(zbus::blocking::Connection, &'static Inhibitor, u32)>);
+
+/// (service and interface, path, release method)
+type Inhibitor = (&'static str, &'static str, &'static str);
+const INHIBITORS: [Inhibitor; 2] = [
+    ("org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "UnInhibit"),
+    ("org.gnome.SessionManager", "/org/gnome/SessionManager", "Uninhibit"),
+];
+
+/// Best effort: with no inhibitor on the bus nothing changes.
+pub fn keep_awake() -> Awake {
+    if crate::setup::detect() == Some(crate::setup::Desktop::Sway) {
+        sway_inhibit();
+    }
+    const WHY: &str = "music visualizer started by hand";
+    let held = || {
+        let conn = zbus::blocking::Connection::session().ok()?;
+        let call = |i: &'static Inhibitor| {
+            let (n, p, _) = *i;
+            let r = if n == INHIBITORS[0].0 {
+                conn.call_method(Some(n), p, Some(n), "Inhibit", &("glyphwave", WHY))
+            } else {
+                // no window id; 4 | 8: suspend and idle (blank, lock)
+                conn.call_method(Some(n), p, Some(n), "Inhibit", &("glyphwave", 0u32, WHY, 12u32))
+            };
+            r.ok()?.body().deserialize::<u32>().ok().map(|c| (i, c))
+        };
+        let (i, c) = INHIBITORS.iter().find_map(call)?;
+        Some((conn, i, c))
+    };
+    Awake(held())
+}
+
+impl Drop for Awake {
+    fn drop(&mut self) {
+        if let Some((conn, (n, p, un), c)) = &self.0 {
+            let _ = conn.call_method(Some(*n), *p, Some(*n), *un, c);
+        }
+    }
+}
+
+/// swayidle doesn't hear the bus, only Wayland idle inhibitors: sway makes
+/// the window one, gone with it. Retried until the terminal's window is up.
+fn sway_inhibit() {
+    std::thread::spawn(|| {
+        for _ in 0..10 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let set = |c: &str| {
+                let q = format!("[{c}=\"glyphwave\"] inhibit_idle open");
+                Command::new("swaymsg").arg(q).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
+            };
+            if set("app_id") | set("class") {
+                return;
+            }
+        }
+    });
+}
+
 /// `glyphwave idle-watch`, started from ~/.config/autostart on GNOME.
 pub fn idle_watch() -> i32 {
     use zbus::blocking::{Connection, MessageIterator};
@@ -228,5 +309,19 @@ pub fn idle_watch() -> i32 {
             eprintln!("glyphwave: idle-watch needs GNOME's Mutter on the session bus: {e}");
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn konsole_black_only_without_a_profile() {
+        let c = command("konsole", &Config::default(), &["gw", "--screensaver"]).unwrap().join(" ");
+        assert!(c.starts_with("konsole --separate -p ScrollBarPosition=2 -p TerminalMargin=0 -p ColorScheme=WhiteOnBlack --fullscreen"), "{c}");
+        let cfg = Config { konsole_profile: Some("Mine".into()), ..Config::default() };
+        let c = command("konsole", &cfg, &["gw", "--screensaver"]).unwrap().join(" ");
+        assert!(c.contains("-p TerminalMargin=0 --profile Mine --fullscreen") && !c.contains("ColorScheme"), "{c}");
     }
 }

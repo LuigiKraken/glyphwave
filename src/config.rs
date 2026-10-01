@@ -133,7 +133,7 @@ impl Default for Config {
             x11_locker: "i3lock -c 000000".into(),
             shortcut: Some("Meta+Ctrl+L".into()),
             lock_after: None,
-            dim: Dim::No,
+            dim: Dim::Battery,
             screens: Screens::All,
         }
     }
@@ -262,9 +262,9 @@ impl Config {
     }
 
     /// Whether dismissing the screensaver after `secs` of it should lock:
-    /// past lock_after, or at once when it was started by hand (`now`).
+    /// past lock_after, and never when it was started by hand (`now`).
     pub fn locks(&self, now: bool, secs: f64) -> bool {
-        self.lock_after.is_some_and(|m| now || secs >= m as f64 * 60.0)
+        !now && self.lock_after.is_some_and(|m| secs >= m as f64 * 60.0)
     }
 
     /// The file setup writes: the general settings, then the optional
@@ -305,7 +305,8 @@ impl Config {
 
         s += "\n# Which terminal opens the screensaver; empty picks the first installed of\n\
               # kitty foot alacritty ghostty wezterm konsole ptyxis gnome-terminal xterm.\n\
-              # konsole_profile names a Konsole profile of your own (e.g. no scrollbar).\n";
+              # konsole_profile names a Konsole profile of your own; without one it opens\n\
+              # black, with no scrollbar or margin.\n";
         let on = self.terminal.is_some() || self.konsole_profile.is_some();
         s += &format!("{}[terminal]\n", opt(on));
         s += &format!("{}terminal = {}\n", opt(self.terminal.is_some()), self.terminal.as_deref().unwrap_or("konsole"));
@@ -409,7 +410,7 @@ mod tests {
             x11_locker: "slock".into(),
             shortcut: None,
             lock_after: Some(0),
-            dim: Dim::Battery,
+            dim: Dim::No,
             screens: Screens::Main,
             ..Config::default()
         };
@@ -420,6 +421,16 @@ mod tests {
         assert_eq!(parse(&d.render()).0, d);
         let d = Config { lock_after: Some(15), ..d };
         assert_eq!(parse(&d.render()).0, d);
+    }
+
+    #[test]
+    fn dim_defaults_to_battery() {
+        assert_eq!(parse("start_after = 5\n").0.dim, Dim::Battery);
+        assert_eq!(parse("dim = no\n").0.dim, Dim::No);
+        assert_eq!(parse("dim = yes\n").0.dim, Dim::Yes);
+        let (c, e) = parse("dim = sometimes\n");
+        assert_eq!(e.len(), 1, "{e:?}");
+        assert_eq!(c.dim, Dim::Battery);
     }
 
     #[test]
@@ -450,6 +461,8 @@ mod tests {
         assert!(at(Some(0)).locks(false, 0.0));
         assert!(!at(Some(5)).locks(false, 299.0));
         assert!(at(Some(5)).locks(false, 300.0));
-        assert!(at(Some(5)).locks(true, 1.0));
+        // started by hand it's a visualizer: never locks
+        assert!(!at(Some(0)).locks(true, 0.0));
+        assert!(!at(Some(5)).locks(true, 1e6));
     }
 }

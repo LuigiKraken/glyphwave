@@ -146,8 +146,14 @@ hooks in, and the research it builds on.
   built into the binary.
 - **Starting it** is left to the desktop's own idle timer. `glyphwave setup`
   hooks into it, and `glyphwave launch` opens the screensaver fullscreen in a
-  terminal. `contrib/` has the same recipes by hand for KDE, GNOME,
-  Hyprland, sway and X11.
+  terminal. It passes each terminal's own options for a black background
+  with no scrollbar or padding (Konsole: `-p ScrollBarPosition=2
+  -p TerminalMargin=0 -p ColorScheme=WhiteOnBlack`, the colour scheme only
+  without a `konsole_profile`), so a terminal nobody customised looks clean
+  to the edge. kitty and xterm also hide the mouse pointer (kitty after a
+  second, xterm by turning it black); in the others, Konsole among them, it
+  stays where it was left. `contrib/` has the same recipes
+  by hand for KDE, GNOME, Hyprland, sway and X11.
 - **One file.** Releases are a static binary (musl, x86_64 and ARM64), so it
   needs no Rust and no extra libraries.
 
@@ -173,7 +179,8 @@ happen: idle minutes before it starts (`start_after`), how long it runs
 (`then_after`, or `forever` for `then = none`), whether coming back while it
 runs shows the lock screen (`lock_after`), what comes after the run (`then`,
 sleep by default), battery (the same times, off, or different times asked
-again), and whether the screen dims while it runs (`dim`, KDE).
+again), and whether the screen dims while it runs (`dim`, KDE; only on battery
+by default).
 `b` goes back a question. Before the list of changes it prints the answers as
 a timeline in which each step counts from the one before. Sleep shows
 whether the computer comes back locked: on KDE that's Lock after waking from
@@ -187,17 +194,15 @@ and delete `~/.local/bin/glyphwave`.
 **The config file** has the general settings at the top (`start_after`,
 `then`, `then_after`, `lock_after`, `on_battery`, `dim`, `screens`, `banner`, `fps`) and optional sections
 below, commented out: shorter times on battery, which terminal to open (and a
-Konsole profile, if you made one), and the locker for Hyprland, sway and X11.
+Konsole profile of your own, which then keeps its colours), and the locker for Hyprland, sway and X11.
 
 **Locking when you come back.** `lock_after` is a grace period, in minutes
 from the screensaver's start. A key or the mouse within it closes the
 screensaver onto the desktop; after it, glyphwave locks the session first and
 closes once the lock screen is up (it waits at most 2 s), so you land on the
-lock screen. `0` always locks; `none`, the default, never does. Started with
-the start-now key or the app-menu entry (`glyphwave launch --now`), it locks
-when woken whenever `lock_after` is set. Only waking it counts: when the
-desktop closes it (`launch --stop`, its own lock screen) nothing extra
-happens. A call is no exception: the key you press to answer locks too, past
+lock screen. `0` always locks; `none`, the default, never does. Only waking
+it counts: when the desktop closes it (`launch --stop`, its own lock screen)
+nothing extra happens. A call is no exception: the key you press to answer locks too, past
 the grace period. It's one value for both power states and counts time
 asleep. On KDE and GNOME it locks through logind (`loginctl lock-session`),
 which both lock screens answer; on Hyprland, sway and X11 it runs the
@@ -206,6 +211,22 @@ which both lock screens answer; on Hyprland, sway and X11 it runs the
 screensaver up for longer and still have it lock, pair `lock_after` with
 `then = screen-off` or `none` (and on KDE turn off its own lock timer, which
 setup warns about).
+
+**Starting it by hand.** Started with the start-now key or the app-menu
+entry (`glyphwave launch --now`, which passes `--now` on), it's a music
+visualizer: waking it never locks, whatever `lock_after` says, and while it
+runs it holds off the desktop's own timers with
+`org.freedesktop.ScreenSaver.Inhibit` on the session bus, or, where nothing
+answers that (GNOME), `org.gnome.SessionManager.Inhibit` for idle and suspend. The
+inhibit is let go when it exits, and by the bus if it crashes. On KDE that
+stops the lock timer and PowerDevil's dimming, screen-off and sleep; hypridle
+honours it unless `ignore_dbus_inhibit = true`. swayidle doesn't listen to the
+bus, so on sway glyphwave asks sway to make its window an idle inhibitor
+(`inhibit_idle open`), gone with the window. xidlehook on X11 has neither, so
+its timers still fire during a run started by hand. It keeps the screen on
+until you stop it, which costs battery. Started by the idle timer it holds
+nothing off, so the timers after it work as before. Tested on KDE; GNOME and
+sway are untested.
 
 ## More than one screen
 

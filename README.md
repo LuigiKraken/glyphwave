@@ -30,9 +30,9 @@ mouse and it's gone.
    happen: how long you're idle before it starts, how long it runs (or
    forever), whether coming back while it runs shows the lock screen, and
    what comes after the run (sleep, lock or screen off). Then whether it runs
-   on battery, and whether the screen dims while it runs. `b` goes back a
-   question. Before it changes anything it sums up your answers in one line,
-   such as "Idle for 5 min → glyphwave runs for 10 min → then it sleeps". Then it hooks itself
+   on battery, and whether the screen dims while it runs (by default only on
+   battery). `b` goes back a question. Before it changes anything it sums up
+   your answers in one line, such as "Idle for 5 min → glyphwave runs for 10 min → then it sleeps". Then it hooks itself
    into your desktop's own idle timer (KDE, GNOME, Hyprland, sway or X11). It
    lists every file it will change before it writes anything, and
    `glyphwave setup --remove` puts them all back. It never needs root and
@@ -59,9 +59,12 @@ stay as they are; setup says so.
 Coming back to a locked screen: with `lock_after = 10` in the config, waking
 the screensaver within its first 10 minutes takes you back to the desktop,
 and after that to the lock screen. The screensaver keeps running until you
-touch a key either way. `0` always locks, `none` (the default) never does. A
-screensaver you started with Meta+Ctrl+L locks when woken whenever
-`lock_after` is set, since you started it to walk away.
+touch a key either way. `0` always locks, `none` (the default) never does.
+
+Started with Meta+Ctrl+L or from the app menu, it's a music visualizer: waking
+it never locks, whatever `lock_after` says, and the desktop doesn't dim, lock
+or sleep while it runs. It keeps the screen on until you stop it, which costs
+battery.
 
 ## What it does
 
