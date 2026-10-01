@@ -61,6 +61,7 @@ USAGE: glyphwave [options]
   --theme NAME      always use one music theme (levels pulse shock wave fire
                     matrix glitch springs bounce warp; floor, the bar floor
                     in place of the ribbon, runs only when asked for)
+  -V, --version     print the version
 
 banner and fps also come from ~/.config/glyphwave/config (setup writes it);
 options given here win. ringtone = default, none or a sound file (wav, ogg,
@@ -161,6 +162,10 @@ fn opts() -> Opts {
                     let (w, h) = v.split_once('x')?;
                     Some((w.parse().ok()?, h.parse().ok()?))
                 })
+            }
+            "-V" | "--version" => {
+                println!("glyphwave {}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
             }
             "-h" | "--help" => {
                 print!("{HELP}");

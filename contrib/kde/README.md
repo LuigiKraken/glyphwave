@@ -31,11 +31,11 @@ sits at the screensaver's start plus the extra minutes:
 | lock | `kscreenlockerrc`, `[Daemon]` (both power states) | `Autolock=true`, `Timeout=15` (minutes) |
 
 Dimming is set in each profile glyphwave runs in, because a dim at KDE's own
-time would dim it partway through or before it starts. `dim = no` (the
-default) sets `[AC][Display] DimDisplayWhenIdle=false`. `dim = yes` sets
+time would dim it partway through or before it starts. `dim = no` sets
+`[AC][Display] DimDisplayWhenIdle=false`. `dim = yes` sets
 `DimDisplayWhenIdle=true` with `DimDisplayIdleTimeoutSec` at the screensaver's
-start, so it runs dimmed from the first frame. `dim = battery` does that only
-under `[Battery]`.
+start, so it runs dimmed from the first frame. `dim = battery` (the default)
+does that only under `[Battery]`, and sets `[AC]` like `dim = no`.
 
 A key missing from the file means Plasma's default, and those fire early:
 screen off after 10 min (5 on battery), sleep after 15 (10 on battery), lock
