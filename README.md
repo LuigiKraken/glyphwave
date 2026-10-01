@@ -115,6 +115,11 @@ put in `~/.config/glyphwave/banner.txt`. The GIF above uses a banner file.
 - `parec` and `pactl` for the music (in `pulseaudio-utils`, `libpulse` on
   Arch), which desktops with PipeWire or PulseAudio normally have.
   `pw-record` works in place of `parec`.
+- A player that reports what it plays over MPRIS. Firefox only does while
+  `media.hardwaremediakeys.enabled` is on in about:config. That's the
+  default, but hardened profiles sometimes turn it off, and then glyphwave
+  never sees Firefox play. It only tells your own desktop session what's
+  playing, nothing goes over the network.
 - Optionally fastfetch or neofetch, for the logo banner.
 
 ## Cost
