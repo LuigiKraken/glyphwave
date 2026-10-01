@@ -56,13 +56,13 @@ pub fn unplaceable(d: Option<Desktop>, term: Option<&str>) -> Option<&'static st
 
 /// sway's or Hyprland's screens, the focused one first.
 fn outputs(d: Desktop) -> Vec<String> {
-    let (cmd, args): (&str, &[&str]) = if d == Desktop::Sway { ("swaymsg", &["-t", "get_outputs"]) } else { ("hyprctl", &["monitors"]) };
+    let (cmd, args): (&str, &[&str]) = if d == Desktop::Sway { ("swaymsg", &["-p", "-t", "get_outputs"]) } else { ("hyprctl", &["monitors"]) };
     let Some(out) = Command::new(cmd).args(args).stderr(Stdio::null()).output().ok().filter(|o| o.status.success()) else {
         return Vec::new();
     };
     let mut v: Vec<(bool, String)> = Vec::new();
     for l in String::from_utf8_lossy(&out.stdout).lines() {
-        // sway: `Output DP-1 'Make Model' (focused)`; Hyprland: `Monitor DP-1 (ID 0):` then `focused: yes`
+        // sway (-p, as piped it prints JSON): `Output DP-1 'Make Model' (focused)`; Hyprland: `Monitor DP-1 (ID 0):` then `focused: yes`
         if let Some(r) = l.strip_prefix("Output ").or(l.strip_prefix("Monitor ")) {
             if !l.contains("(disabled)") && !l.contains("(inactive)") {
                 v.push((l.ends_with("(focused)"), r.split_whitespace().next().unwrap_or("").to_string()));
@@ -200,13 +200,17 @@ impl Extra {
                 got.push((self.want.remove(i).0, fd));
             }
         }
-        // a terminal whose stub never came: close it rather than leave it
-        if self.since.elapsed() > Duration::from_secs(10) {
-            for (_, pid) in self.want.drain(..) {
-                if let Some(p) = pid {
+        // a terminal whose stub never came: close it rather than leave it;
+        // one with no known pid (Hyprland) can still attach for a minute
+        let late = self.since.elapsed();
+        if late > Duration::from_secs(10) {
+            self.want.retain(|&(_, pid)| match pid {
+                Some(p) => {
                     unsafe { libc::kill(p, libc::SIGTERM) };
+                    false
                 }
-            }
+                None => late < Duration::from_secs(60),
+            });
         }
         got
     }
@@ -261,8 +265,16 @@ fn kwin_place(map: &str) -> zbus::Result<()> {
          \x20   if (w.output.name !== o.name) {{ w.fullScreen = false; workspace.sendClientToScreen(w, o); }}\n\
          \x20   w.fullScreen = true;\n\
          }}\n\
+         // the main window gone means the run is over: stop placing, so a\n\
+         // script a crash left loaded can't catch a later window\n\
+         function gone(w) {{\n\
+         \x20   if (want[w.pid] !== 0) return;\n\
+         \x20   workspace.windowAdded.disconnect(place);\n\
+         \x20   workspace.windowRemoved.disconnect(gone);\n\
+         }}\n\
          workspace.windowList().forEach(place);\n\
-         workspace.windowAdded.connect(place);\n"
+         workspace.windowAdded.connect(place);\n\
+         workspace.windowRemoved.connect(gone);\n"
     );
     // KWin reads it in the background, so it stays until glyphwave ends
     let path = script_path();

@@ -261,12 +261,14 @@ the same moment.
 - **No strays.** A stub waits on a lock the main process holds, so when the
   main process ends, however it ends (`launch --stop`, a crash, `kill -9`),
   every stub exits and its window closes. `launch --stop` stops the stubs
-  too. A terminal whose stub doesn't show up within 10 s is closed.
+  too. A terminal whose stub doesn't show up within 10 s is closed; on
+  Hyprland, where its pid isn't known, a late one can still join for a
+  minute.
 - **Placing the windows** is the compositor's job, and each has its own way:
 
   | desktop | how | main screen |
   |---|---|---|
-  | KDE, Wayland and X11 | a KWin script, loaded over D-Bus, puts each window by its pid fullscreen on its screen, now and as it opens; it's unloaded when glyphwave ends | the primary screen (System Settings > Display) |
+  | KDE, Wayland and X11 | a KWin script, loaded over D-Bus, puts each window by its pid fullscreen on its screen, now and as it opens; it's unloaded when glyphwave ends, and stops placing once the main window closes, so one a crash left loaded does nothing | the primary screen (System Settings > Display) |
   | sway | `swaymsg '[pid=…] move container to output …'` once the window is there | the focused screen (sway has no primary) |
   | Hyprland | the terminal is started through `hyprctl dispatch exec '[monitor …; fullscreen] …'` | the focused screen |
   | GNOME, other X11 window managers | can't be done: there's no way for an app to choose the screen | one window, on the screen the desktop picks; the others stay as they are |

@@ -127,7 +127,8 @@ fn summary(c: &Config) -> String {
         (true, None) => "on battery too".to_string(),
         (true, Some(b)) => format!("on battery {}", t(b)),
     };
-    let screens = if crate::screens::count() > 1 { format!("; screens {}", c.screens.name()) } else { String::new() };
+    let placeable = crate::screens::unplaceable(detect(), launch::terminal(c).as_deref()).is_none();
+    let screens = if crate::screens::count() > 1 && placeable { format!("; screens {}", c.screens.name()) } else { String::new() };
     format!("{}; {}; dim {}; {bat}; banner {}{screens}", t(c.ac), wake(c.lock_after), c.dim.name(), c.banner.as_deref().unwrap_or("(default)"))
 }
 

@@ -27,6 +27,10 @@ impl Term {
             if libc::tcgetattr(fd_in, &mut t) == 0 {
                 let orig = t;
                 t.c_lflag &= !(libc::ICANON | libc::ECHO | libc::IEXTEN);
+                if fd_in != libc::STDIN_FILENO {
+                    // another screen's terminal: Ctrl+C or Ctrl+Z there is a key that wakes it
+                    t.c_lflag &= !libc::ISIG;
+                }
                 t.c_iflag &= !(libc::IXON | libc::ICRNL);
                 t.c_cc[libc::VMIN] = 0;
                 t.c_cc[libc::VTIME] = 0;
