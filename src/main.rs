@@ -72,8 +72,9 @@ TEST KEYS (--test): 1–0 the themes in the order above · d t s w fake a
 
 A muted sink, or one at 0 %, counts as paused. While a call rings (read from
 the desktop's call notification) the banner makes way for the app's icon and
-the caller, the music fades out and stays paused, a ringtone plays, and any
-key or the mouse ends glyphwave, the music keys too.
+the caller, the music fades out and pauses, and a ringtone plays. Any key or
+the mouse ends glyphwave, the music keys too, and the music stays paused; a
+ring that stops on its own fades the music back in.
 ";
 
 struct Opts {
