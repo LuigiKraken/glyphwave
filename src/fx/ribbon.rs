@@ -10,7 +10,11 @@
 //! (the green of the matrix rain) alike.
 //! How much it does follows `intensity`: quiet music gets a low, dim, still
 //! ribbon; busy music a tall one that brightens on the beat, flashes on
-//! kicks, throws hi-hat sparks and sends a pulse outward on each downbeat.
+//! kicks and sends a pulse outward on each downbeat.
+//! Sparks are kept for when the music goes wild (the stretch after a drop,
+//! or peak intensity under one of the explosive themes): then the skyline
+//! steams on the hi-hats and bursts on the kicks, high and bright, the rate
+//! ramping with the wildness so they thin out rather than stop.
 //! Between holds it lifts a little, to carry the transition. Spikes run into
 //! the headroom under the banner on a soft limit, so they never flat-top.
 
@@ -19,10 +23,12 @@ use crate::canvas::Canvas;
 use crate::color::{Rgb, WHITE};
 
 struct Spark {
-    x: i32,
+    x: f32,
     y: f32,
+    vx: f32,
     vy: f32,
     life: f32,
+    heat: f32,
 }
 
 pub struct Ribbon {
@@ -55,8 +61,11 @@ impl Ribbon {
 
     /// Draw into the bottom `room` rows at opacity `a`; `lift` (0..1) is the
     /// extra height and life it gets while the banner is between holds.
-    /// `tint` is the colour of the letters above each screen column.
-    pub fn draw(&mut self, cv: &mut Canvas, cx: &Ctx, room: usize, a: f32, lift: f32, tint: &[Rgb]) {
+    /// `wild` (0..1) is how hard the music is going off, and how many
+    /// sparks it throws (none at 0). `tint` is the colour of the letters
+    /// above each screen column.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw(&mut self, cv: &mut Canvas, cx: &Ctx, room: usize, a: f32, lift: f32, wild: f32, tint: &[Rgb]) {
         let f = cx.f;
         let (w, h) = (cx.w as i32, cx.h as i32);
         let dt = cx.dt;
@@ -136,27 +145,39 @@ impl Ribbon {
             }
         }
 
-        // hi-hat sparks off the skyline once the music is busy
-        if f.hat > 0.15 && int > 0.35 {
-            for _ in 0..(f.hat * 5.0 * int) as usize + 1 {
-                let x = self.rng.below(w as usize);
-                let top = tops[x].div_ceil(8) as f32;
-                self.sparks.push(Spark { x: x as i32, y: base as f32 - top, vy: self.rng.range(3.0, 7.0), life: 1.0 });
-            }
+        // sparks, only while the music is wild: steam on the hi-hats, a
+        // burst off the taller columns on each kick
+        let n = wild * (f.hat.min(1.0) * 10.0 + if f.kick > 0.0 { w as f32 / 6.0 } else { 0.0 });
+        let n = n as usize + self.rng.chance(n.fract()) as usize;
+        for _ in 0..n {
+            let (x0, x1) = (self.rng.below(w as usize), self.rng.below(w as usize));
+            let x = if tops[x0] >= tops[x1] { x0 } else { x1 };
+            let top = tops[x].div_ceil(8) as f32;
+            self.sparks.push(Spark {
+                x: x as f32,
+                y: base as f32 - top,
+                vx: self.rng.range(-1.5, 1.5),
+                vy: self.rng.range(6.0, 14.0),
+                life: 1.0,
+                heat: wild,
+            });
         }
+        // they rise, slow under gravity and drift a little
         for s in &mut self.sparks {
+            s.x += s.vx * dt;
             s.y -= s.vy * dt;
-            s.life -= dt / 0.6;
+            s.vy -= 8.0 * dt;
+            s.life -= dt / 0.9;
         }
         let ceiling = (h - room as i32) as f32;
         self.sparks.retain(|s| s.life > 0.0 && s.y > ceiling);
-        if self.sparks.len() > 200 {
-            self.sparks.drain(..self.sparks.len() - 200);
+        if self.sparks.len() > 300 {
+            self.sparks.drain(..self.sparks.len() - 300);
         }
         for s in &self.sparks {
             let glyph = if s.life > 0.6 { '•' } else if s.life > 0.3 { '·' } else { '˙' };
-            let col = colour(s.x as f32);
-            cv.put_under(s.x, s.y.round() as i32, glyph, col.mix(WHITE, 0.5).scale(s.life * a * cx.light));
+            let col = colour(s.x).mix(WHITE, 0.4 + 0.3 * s.life);
+            cv.put_under(s.x.round() as i32, s.y.round() as i32, glyph, col.scale(s.life.sqrt() * s.heat * a * cx.light));
         }
     }
 }
@@ -182,8 +203,9 @@ impl Calm {
         Calm { f: Default::default(), w: 0.0, since: 0.0 }
     }
 
-    /// Each frame, drawn or not.
-    pub fn feed(&mut self, src: &crate::dsp::Features, dt: f32, live: bool) {
+    /// Each frame, drawn or not. `floor` keeps the bars at least at the low
+    /// line (a ring: the chime's quiet stretches mustn't empty the ribbon).
+    pub fn feed(&mut self, src: &crate::dsp::Features, dt: f32, live: bool, floor: bool) {
         // lets go at once (a pause empties the bars faster than the player
         // says so), takes the music back over a moment
         self.w = if live { (self.w + dt / 0.6).min(1.0) } else { (self.w - dt / 0.15).max(0.0) };
@@ -199,6 +221,9 @@ impl Calm {
             for (o, &i) in out.iter_mut().zip(inp) {
                 let held = *o - (*o - o.min(REST)) * settle;
                 *o = held + (i - held) * k;
+                if floor {
+                    *o = o.max(REST);
+                }
             }
         }
         let held = f.intensity * (1.0 - settle);
