@@ -512,9 +512,9 @@ fn main() {
     }
     if cap.missing {
         eprintln!(
-            "glyphwave: neither parec nor pw-record found, so no music visuals. parec comes with \
-             pulseaudio-utils (Debian, Ubuntu) or libpulse (Arch), pw-record with pipewire-utils \
-             (Fedora) or pipewire-bin (Debian, Ubuntu)."
+            "glyphwave: no music visuals: parec and pw-record are missing or didn't run. parec comes \
+             with pulseaudio-utils (Debian, Ubuntu, Fedora) or libpulse (Arch); pw-record needs \
+             PipeWire 1.4 or newer."
         );
     }
     if o.stats {

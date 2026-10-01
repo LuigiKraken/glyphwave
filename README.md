@@ -225,9 +225,10 @@ Konsole profile, if you made one), and the locker for Hyprland, sway and X11.
 **What a system needs:**
 - a terminal; `glyphwave launch` finds kitty, foot, Alacritty, Ghostty,
   WezTerm, Konsole, Ptyxis, GNOME Terminal or xterm;
-- `parec` or `pw-record`, for the music. PipeWire systems have `pw-record`
-  (Fedora: `pipewire-utils`, installed by default); `parec` is in
-  `pulseaudio-utils`;
+- `parec`, for the music, and `pactl`, for the output's mute and volume;
+  both come with `pulseaudio-utils` (`libpulse` on Arch), which every
+  desktop with PipeWire or PulseAudio normally has. `pw-record` stands in
+  for `parec` on PipeWire 1.4 or newer;
 - a font with block characters, which every common terminal font has. On the
   bare Linux console it swaps in the few glyphs its fonts have;
 - optionally fastfetch or neofetch, for the logo banner.

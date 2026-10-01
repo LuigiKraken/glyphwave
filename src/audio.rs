@@ -83,16 +83,29 @@ pub struct Capture {
     child: Option<Child>,
     /// When a failed or dead capture tool may be tried again.
     retry: Option<Instant>,
-    /// Index into TOOLS of the first one not known to be missing.
+    /// Index into TOOLS of the first one not known to be missing or broken.
     tool: usize,
-    /// Neither `parec` nor `pw-record` is installed; said once on exit.
+    /// When the child started, and how many times in a row one died within
+    /// a second of starting (no sound server, an old pw-record without
+    /// --raw): two of those and the next tool is tried.
+    since: Instant,
+    quick_deaths: u32,
+    /// No capture tool is installed or works; said once on exit.
     pub missing: bool,
     pub ring: Arc<Mutex<Ring>>,
 }
 
 impl Capture {
     pub fn new() -> Capture {
-        Capture { child: None, retry: None, tool: 0, missing: false, ring: Arc::new(Mutex::new(Ring::new())) }
+        Capture {
+            child: None,
+            retry: None,
+            tool: 0,
+            since: Instant::now(),
+            quick_deaths: 0,
+            missing: false,
+            ring: Arc::new(Mutex::new(Ring::new())),
+        }
     }
 
     pub fn running(&mut self) -> bool {
@@ -103,7 +116,19 @@ impl Capture {
     }
 
     pub fn start(&mut self) {
-        if self.running() || self.retry.is_some_and(|r| Instant::now() < r) {
+        if self.missing || self.running() {
+            return;
+        }
+        // called every frame while playing, so a death is seen at once
+        if let Some(mut c) = self.child.take() {
+            let _ = c.wait();
+            self.quick_deaths = if self.since.elapsed() < Duration::from_secs(1) { self.quick_deaths + 1 } else { 0 };
+            if self.quick_deaths >= 2 {
+                self.tool += 1;
+                self.quick_deaths = 0;
+            }
+        }
+        if self.retry.is_some_and(|r| Instant::now() < r) {
             return;
         }
         self.stop();
@@ -148,6 +173,7 @@ impl Capture {
             }
         });
         self.child = Some(child);
+        self.since = Instant::now();
     }
 
     pub fn stop(&mut self) {
