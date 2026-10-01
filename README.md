@@ -198,6 +198,10 @@ released yet. Left before the first release:
    waking it, calls show who's calling, and your computer locks or sleeps
    when you chose.
 
+Players and videos often hold the idle timer off, so for music you start it
+yourself: setup binds **Meta+Shift+V** (`shortcut =` in the config) and adds
+a glyphwave entry to the app menu that you can pin to a panel or dock.
+
 Setup uses your desktop's own idle settings (KDE, GNOME, Hyprland, sway, X11)
 rather than running its own timer. On KDE and GNOME it changes them for you;
 on Hyprland, sway and X11 it prints the lines to paste. GNOME has no hook for
