@@ -111,7 +111,9 @@ means the text and the music share one screen, one palette and one clock.
   half a second and pauses, and a soft chime rings until the call stops
   (`ringtone = none` or a sound file of your own in the config). You answer
   in the app itself: while a call rings, every key (the music keys too) and
-  the mouse end the screensaver. The music stays paused afterwards.
+  the mouse end the screensaver, and the music stays paused. A call that
+  stops ringing on its own (missed, or declined elsewhere) brings the music
+  back, fading in, like a phone.
 - **The banner** is your system's logo (whatever fastfetch or neofetch
   shows, in glyphwave's colours), your machine's name in big block letters,
   or your own art in `~/.config/glyphwave/banner.txt`. It uses your own art

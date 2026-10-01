@@ -2,7 +2,8 @@
 //! fades out (`pactl set-sink-input-volume`, never the sink, so the call
 //! app's ring stays audible), the player pauses and gets its volume back for
 //! the next play; and a ringtone loops through `pw-play` or `paplay` until the
-//! ring ends. Spotify's MPRIS Volume would do for the fade, Chromium's has
+//! ring ends. A ring that ends on its own (missed, declined elsewhere) plays
+//! the music again and fades it back in, like a phone. Spotify's MPRIS Volume would do for the fade, Chromium's has
 //! none, so the stream it is. Nothing runs while no call rings.
 
 use std::io::Write;
@@ -13,13 +14,15 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 const FADE: Duration = Duration::from_millis(450);
+const FADE_IN: Duration = Duration::from_millis(1500);
 const STEPS: u32 = 12;
 const RATE: u32 = crate::audio::RATE;
 
-/// The player's uncorked sink inputs (id, raw volume per channel), matched by
-/// the bus name's app part (`org.mpris.MediaPlayer2.brave.instance42` → brave)
-/// against the stream's application name, binary or node name.
-fn streams(key: &str) -> Vec<(String, Vec<u32>)> {
+/// The player's sink inputs (id, raw volume per channel), matched by the bus
+/// name's app part (`org.mpris.MediaPlayer2.brave.instance42` → brave)
+/// against the stream's application name, binary or node name. Corked
+/// (paused) ones only with `corked`.
+fn streams(key: &str, corked_too: bool) -> Vec<(String, Vec<u32>)> {
     let Ok(out) = Command::new("pactl").args(["list", "sink-inputs"]).env("LC_ALL", "C").stderr(Stdio::null()).output() else {
         return Vec::new();
     };
@@ -39,7 +42,7 @@ fn streams(key: &str) -> Vec<(String, Vec<u32>)> {
                 ours |= named && v.trim_matches('"').to_lowercase().contains(key);
             }
         }
-        if ours && !corked && !vol.is_empty() {
+        if ours && (corked_too || !corked) && !vol.is_empty() {
             found.push((id, vol));
         }
     }
@@ -54,19 +57,10 @@ fn set_volume(id: &str, vol: &[u32], k: f32) {
 /// Fade `player`'s stream to silence, `pause` it, then put the volume back.
 /// Joined on exit, so a key that ends glyphwave mid-fade can't leave it silent.
 pub fn fade_and_pause(player: &str, pause: impl FnOnce() + Send + 'static) -> JoinHandle<()> {
-    let key = player.trim_start_matches("org.mpris.MediaPlayer2.").split('.').next().unwrap_or("").to_lowercase();
+    let key = app(player);
     std::thread::spawn(move || {
-        let found = if key.is_empty() { Vec::new() } else { streams(&key) };
-        let start = Instant::now();
-        for i in 1..=STEPS {
-            for (id, vol) in &found {
-                set_volume(id, vol, 1.0 - i as f32 / STEPS as f32);
-            }
-            // on a clock, since each pactl takes a few ms itself
-            if let Some(w) = (FADE * i / STEPS).checked_sub(start.elapsed()) {
-                std::thread::sleep(w);
-            }
-        }
+        let found = if key.is_empty() { Vec::new() } else { streams(&key, false) };
+        ramp(&found, FADE, |k| 1.0 - k);
         pause();
         // the player still drains what it buffered; let that go out silent
         std::thread::sleep(Duration::from_millis(300));
@@ -74,6 +68,44 @@ pub fn fade_and_pause(player: &str, pause: impl FnOnce() + Send + 'static) -> Jo
             set_volume(id, vol, 1.0);
         }
     })
+}
+
+/// Play `player` again (after `before`, the fade out, if it is still going)
+/// and fade it in. Its stream is still there, corked, while it is paused, so
+/// it is silenced first and starts from nothing; a player that dropped its
+/// stream just starts.
+pub fn play_and_fade_in(player: &str, before: Option<JoinHandle<()>>, play: impl FnOnce() + Send + 'static) -> JoinHandle<()> {
+    let key = app(player);
+    std::thread::spawn(move || {
+        if let Some(b) = before {
+            let _ = b.join();
+        }
+        let found = if key.is_empty() { Vec::new() } else { streams(&key, true) };
+        for (id, vol) in &found {
+            set_volume(id, vol, 0.0);
+        }
+        play();
+        ramp(&found, FADE_IN, |k| k);
+    })
+}
+
+/// The bus name's app part: `org.mpris.MediaPlayer2.brave.instance42` → brave.
+fn app(player: &str) -> String {
+    player.trim_start_matches("org.mpris.MediaPlayer2.").split('.').next().unwrap_or("").to_lowercase()
+}
+
+/// Step the streams' volume through `level(0..1]` over `len`.
+fn ramp(found: &[(String, Vec<u32>)], len: Duration, level: impl Fn(f32) -> f32) {
+    let start = Instant::now();
+    for i in 1..=STEPS {
+        for (id, vol) in found {
+            set_volume(id, vol, level(i as f32 / STEPS as f32));
+        }
+        // on a clock, since each pactl takes a few ms itself
+        if let Some(w) = (len * i / STEPS).checked_sub(start.elapsed()) {
+            std::thread::sleep(w);
+        }
+    }
 }
 
 /// One ring of the built-in tone, built on the first call: a soft G5–E5

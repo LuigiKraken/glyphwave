@@ -203,6 +203,8 @@ fn main() {
     let calls = calls::Calls::start();
     let mut ringer = ringer::Ringer::new(o.ringtone.as_deref());
     let (mut fade, mut was_ringing) = (None::<std::thread::JoinHandle<()>>, false);
+    // the player a ring paused, to play again if the ring ends on its own
+    let mut paused_for_call: Option<String> = None;
     // the demo isn't on the sink; --test fakes a mute with m instead
     let hushed = if o.demo { Arc::new(AtomicBool::new(false)) } else { audio::watch_sink() };
     let (mut fake_pause, mut fake_mute) = (false, false);
@@ -394,10 +396,18 @@ fn main() {
         if ringing && !scene_f.on() {
             banner.drop_cycle();
         }
-        // the player fades out and pauses once (and stays paused; the demo
-        // leaves the real one alone); the ringtone loops while it rings
+        // the player fades out and pauses once (the demo leaves the real one
+        // alone); the ringtone loops while it rings. A ring that ends without
+        // a key (missed, or declined elsewhere) brings the music back, like a
+        // phone; a key ends glyphwave first, so answering keeps it paused
         if ringing && !was_ringing && !o.demo && track.playing() {
-            fade = Some(ringer::fade_and_pause(&track.player, watcher.pauser(track.player.clone())));
+            fade = Some(ringer::fade_and_pause(&track.player, watcher.later(track.player.clone(), "Pause")));
+            paused_for_call = Some(track.player.clone());
+        }
+        if !ringing && was_ringing {
+            if let Some(p) = paused_for_call.take() {
+                fade = Some(ringer::play_and_fade_in(&p, fade.take(), watcher.later(p.clone(), "Play")));
+            }
         }
         was_ringing = ringing;
         ringer.ring(ringing);
