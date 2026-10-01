@@ -236,6 +236,7 @@ fn main() {
     let mut ribbon_f = Fader::default();
     let mut lift = Fader::default();
     let mut call_f = Fader::default();
+    let mut pulse = fx::call::Pulse::new();
     let mut scene_f = Fader { v: 1.0, target: 1.0 };
     // the last call seen, kept after it ends for the fade-out
     let (mut call, mut call_seen) = (None::<calls::Call>, 0u32);
@@ -351,12 +352,15 @@ fn main() {
         let track = watcher.snapshot();
 
         // audio: capture while something plays (or the demo), stop after 10 s;
-        // a muted sink, or one at 0 %, counts as paused
+        // a muted sink, or one at 0 %, counts as paused. While a call rings
+        // it listens too: the music has paused, so what plays is the ring,
+        // and the call view pulses on it
         let hush = fake_mute || hushed.load(Ordering::Relaxed);
         let playing = !hush && ((o.demo && !fake_pause) || track.playing());
         not_playing = if playing { 0.0 } else { not_playing + dt };
+        let listen = was_ringing && !o.demo;
         if !o.demo {
-            if playing && !idle_forced {
+            if (playing && !idle_forced) || listen {
                 cap.start();
             } else if (not_playing > 10.0 || idle_forced) && cap.running() {
                 cap.stop();
@@ -397,15 +401,15 @@ fn main() {
         let light = 0.8 + 0.2 * f.loud * music.a() + 0.2 * (1.0 - music.a());
         let cx = Ctx { f, w, h, t, dt, palette: &palette, grad: &grad, phase, light };
 
-        // a ringing call: the scene (banner, theme, ribbon, ambience) fades
-        // out wherever it is, then the call view fades in; once that has
-        // faded out again the scene returns with a fresh intro
+        // a ringing call: the scene (banner, theme, ribbon, ambience) and the
+        // call view crossfade, quickly so the call is up at once; when it
+        // ends the scene comes back where it was, more slowly
         calls.sync(&mut call_seen, &mut call);
         let ringing = call.as_ref().is_some_and(|c| c.ringing(now));
-        scene_f.target = if ringing || call_f.on() { 0.0 } else { 1.0 };
-        scene_f.step(dt, 0.3);
-        if ringing && !scene_f.on() {
-            banner.drop_cycle();
+        scene_f.target = if ringing { 0.0 } else { 1.0 };
+        scene_f.step(dt, if ringing { 0.35 } else { 0.9 });
+        if ringing && !was_ringing {
+            pulse.reset();
         }
         // the player fades out and pauses once (--demo leaves the real one
         // alone, --test's fake calls don't, to try it); the ringtone loops while it rings. A ring that ends without
@@ -459,10 +463,11 @@ fn main() {
             }
         }
         fx::label::draw(&mut cv, &cx, &track, label_f.a());
-        call_f.target = if ringing && !scene_f.on() { 1.0 } else { 0.0 };
-        call_f.step(dt, if ringing { 0.3 } else { 0.6 });
+        call_f.target = if ringing { 1.0 } else { 0.0 };
+        call_f.step(dt, if ringing { 0.3 } else { 0.5 });
         if let Some(c) = call.as_ref().filter(|_| call_f.on()) {
-            fx::call::draw(&mut cv, &cx, c, call_f.a());
+            pulse.step(dt, ringing, ringer.round(), if listen { f.onset } else { 0.0 });
+            fx::call::draw(&mut cv, &cx, c, &pulse, call_f.a());
         }
         if debug {
             let s = format!(

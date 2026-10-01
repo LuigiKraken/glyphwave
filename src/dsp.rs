@@ -153,6 +153,8 @@ pub struct Features {
     pub kick: f32,
     pub snare: f32,
     pub hat: f32,
+    /// Any onset this frame, in any band (a chime, a ringtone), 0 = none.
+    pub onset: f32,
     pub kick_env: f32,
     pub snare_env: f32,
     pub hat_env: f32,
@@ -389,6 +391,7 @@ impl Analyzer {
         f.kick = 0.0;
         f.snare = 0.0;
         f.hat = 0.0;
+        f.onset = 0.0;
         f.beat = false;
         f.drop = false;
         f.section = false;
@@ -695,6 +698,7 @@ impl Analyzer {
         self.f.kick = self.f.kick.max(k);
         self.f.snare = self.f.snare.max(s);
         self.f.hat = self.f.hat.max(h);
+        self.f.onset = self.f.onset.max(a).max(k).max(s).max(h);
         if a > 0.0 || k > 0.0 {
             self.onset_times.push(self.clock);
             self.pll_onset(if k > 0.0 { 1.0 } else { 0.5 });

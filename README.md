@@ -2,10 +2,11 @@
 
 A screensaver for Linux that runs in a fullscreen terminal. When you step
 away it animates your distro's logo or your machine's name with text effects,
-and while music plays it turns into a visualizer. Touch a key or the mouse
-and it's gone.
+and while music plays it turns into a visualizer. When someone calls you on
+Slack, Discord, Teams or WhatsApp, it shows who's calling. Touch a key or the
+mouse and it's gone.
 
-![glyphwave: an idle text effect, three music themes through a drop, and an incoming call](docs/demo.gif)
+![glyphwave: an idle text effect, three music themes through a drop, and an incoming call that ripples with the ringtone](docs/demo.gif)
 
 ## Install
 

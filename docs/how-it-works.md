@@ -92,10 +92,15 @@ hooks in, and the research it builds on.
   records the sound before the system volume is applied, so glyphwave watches
   the output's mute and volume itself.)
 - **Calls.** When someone calls on Slack, Discord, Teams, WhatsApp and similar
-  apps, the screen fades to a small icon for the app and a card saying who's
-  calling, read from the desktop's call notification. The music fades out in
-  half a second and pauses, and a soft chime rings until the call stops
-  (`ringtone = none` or a sound file of your own in the config). You answer
+  apps, the screen crossfades in a third of a second to the app's icon and a
+  card saying who's calling, read from the desktop's call notification. The
+  music fades out in half a second and pauses, and a soft chime rings until
+  the call stops (`ringtone = none` or a sound file of your own in the
+  config). The view moves with the ring: every note sends a wave out of the
+  icon, buzzes it and runs a light round the card. With the built-in chime it
+  follows the notes; with your own ringtone, or the app's own ring, it
+  follows the onsets it hears. When the call ends the scene fades back in
+  where it left off. You answer
   in the app itself: while a call rings, every key (the music keys too) and
   the mouse end the screensaver, and the music stays paused. `c` ignores
   the call: the ring stops, the screensaver stays, and the music fades back

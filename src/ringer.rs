@@ -107,19 +107,23 @@ fn ramp(found: &[(String, Vec<u32>)], len: Duration, level: impl Fn(f32) -> f32)
     }
 }
 
+/// The built-in tone's notes (start in s, Hz) and the length of one round;
+/// the call view pulses on them.
+pub const NOTES: [(f32, f32); 4] = [(0.0, 784.0), (0.22, 659.3), (0.6, 784.0), (0.82, 659.3)];
+pub const ROUND: f32 = 2.5;
+
 /// One ring of the built-in tone, built on the first call: a soft G5–E5
 /// chime twice, then quiet; 2.5 s of mono float32le.
 fn tone() -> &'static [u8] {
     static TONE: OnceLock<Vec<u8>> = OnceLock::new();
     TONE.get_or_init(|| {
         let sr = RATE as f32;
-        let notes = [(0.0f32, 784.0f32), (0.22, 659.3), (0.6, 784.0), (0.82, 659.3)];
-        let n = (2.5 * sr) as usize;
+        let n = (ROUND * sr) as usize;
         let mut out = Vec::with_capacity(n * 4);
         for i in 0..n {
             let t = i as f32 / sr;
             let mut s = 0.0f32;
-            for &(at, f) in &notes {
+            for &(at, f) in &NOTES {
                 let d = t - at;
                 if (0.0..0.8).contains(&d) {
                     let env = (d / 0.005).min(1.0) * (-d * 6.0).exp();
@@ -210,10 +214,88 @@ impl Ringer {
         self.gave_up = self.child.is_none();
     }
 
+    /// How far into its round the built-in tone is, when it's what plays
+    /// (the player takes a moment to start sounding).
+    pub fn round(&self) -> Option<f32> {
+        let on = matches!(self.tone, Tone::Builtin) && self.child.is_some();
+        on.then(|| (self.since.elapsed().as_secs_f32() - 0.05).max(0.0))
+    }
+
     pub fn stop(&mut self) {
         if let Some(mut c) = self.child.take() {
             let _ = c.kill();
             let _ = c.wait();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NOTES, ROUND, tone};
+    use crate::audio::{RATE, RING, Ring};
+    use crate::dsp::Analyzer;
+
+    /// Where the analyser hears onsets in `rounds` of `round` (mono samples,
+    /// one round long), fed to it frame by frame like the capture does.
+    fn heard(round: &[f32], rounds: usize) -> Vec<f32> {
+        let mut ring = Ring { l: vec![0.0; RING], r: vec![0.0; RING], pos: 0, total: 0 };
+        let mut an = Analyzer::new();
+        an.set_bars(40);
+        let per = RATE as usize / 30;
+        let n = round.len() * rounds;
+        let mut at = Vec::new();
+        for f in 0..n / per {
+            for i in f * per..(f + 1) * per {
+                let s = round[i % round.len()];
+                (ring.l[ring.pos], ring.r[ring.pos]) = (s, s);
+                ring.pos = (ring.pos + 1) % RING;
+                ring.total += 1;
+            }
+            an.update(&ring, 1.0 / 30.0);
+            if an.f.onset > 0.0 {
+                at.push(((f + 1) * per) as f32 / RATE as f32);
+            }
+        }
+        at
+    }
+
+    fn near(at: &[f32], want: f32) -> bool {
+        at.iter().any(|&t| (t - want).abs() < 0.08)
+    }
+
+    #[test]
+    fn the_chime_is_heard_on_its_notes() {
+        let round: Vec<f32> = tone().chunks(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+        let at = heard(&round, 3);
+        // after the first round (the analyser warms up), every note
+        for k in 1..3 {
+            for &(n, _) in &NOTES {
+                let want = k as f32 * ROUND + n;
+                assert!(near(&at, want), "no onset near {want:.2} s in {at:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn another_ringtone_is_heard_too() {
+        // a marimba-ish triplet at another pitch and pace, 1.8 s a round
+        let sr = RATE as f32;
+        let notes = [(0.0, 523.3), (0.3, 659.3), (0.6, 880.0)];
+        let round: Vec<f32> = (0..(1.8 * sr) as usize)
+            .map(|i| {
+                let t = i as f32 / sr;
+                notes.iter().filter(|&&(at, _)| t >= at).map(|&(at, f)| {
+                    let d = t - at;
+                    (-d * 9.0).exp() * (std::f32::consts::TAU * f * d).sin() * 0.2
+                }).sum()
+            })
+            .collect();
+        let at = heard(&round, 3);
+        for k in 1..3 {
+            for &(n, _) in &notes {
+                let want = k as f32 * 1.8 + n;
+                assert!(near(&at, want), "no onset near {want:.2} s in {at:?}");
+            }
         }
     }
 }
