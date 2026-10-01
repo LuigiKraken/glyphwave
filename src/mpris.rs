@@ -234,4 +234,14 @@ impl Watcher {
         }
         let _ = conn.call_method(Some(name.as_str()), PATH, Some(PLAYER), method, &());
     }
+
+    /// Pause `name` later, from another thread (the fade before a call).
+    pub fn pauser(&self, name: String) -> impl FnOnce() + Send + 'static {
+        let conn = self.conn.clone();
+        move || {
+            if let Some(c) = conn {
+                let _ = c.call_method(Some(name.as_str()), PATH, Some(PLAYER), "Pause", &());
+            }
+        }
+    }
 }

@@ -1,6 +1,6 @@
 //! ~/.config/glyphwave/config: plain `key = value` lines, `[section]`
 //! headers, `#` comments. `glyphwave setup` writes it; glyphwave reads the
-//! banner and fps from it, the launcher the terminal and battery choice.
+//! banner, fps and ringtone from it, the launcher the terminal and battery choice.
 
 use std::path::PathBuf;
 
@@ -49,6 +49,8 @@ pub struct Config {
     pub battery: Option<Times>,
     pub banner: Option<String>,
     pub fps: Option<f32>,
+    /// default, none or a sound file; None = default
+    pub ringtone: Option<String>,
     pub terminal: Option<String>,
     pub konsole_profile: Option<String>,
     pub hyprland_locker: String,
@@ -64,6 +66,7 @@ impl Default for Config {
             battery: None,
             banner: None,
             fps: None,
+            ringtone: None,
             terminal: None,
             konsole_profile: None,
             hyprland_locker: "hyprlock".into(),
@@ -154,6 +157,7 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             ("", "on_battery") => yes_no(&v).map(|y| c.on_battery = y),
             ("", "banner") => set(&mut c.banner, v),
             ("", "fps") => v.parse::<f32>().map(|f| c.fps = Some(f)).map_err(|_| format!("fps {v:?} isn't a number")),
+            ("", "ringtone") => set(&mut c.ringtone, v),
             ("battery", "start_after") => minutes(&v).map(|m| bs = Some(m)),
             ("battery", "then") => then(&v).map(|t| bt = Some(t)),
             ("battery", "then_after") => minutes(&v).map(|m| ba = Some(m)),
@@ -198,6 +202,10 @@ impl Config {
             None => s += "# banner = logo         # logo, name, or a path to a text file\n",
         }
         s += &format!("fps = {}\n", self.fps.unwrap_or(30.0));
+        match &self.ringtone {
+            Some(r) => s += &format!("ringtone = {r}\n"),
+            None => s += "# ringtone = default     # while a call rings: default, none, or a wav/ogg/flac file\n",
+        }
 
         let opt = |on: bool| if on { "" } else { "# " };
         s += "\n# Battery times, when they should differ from the ones above. KDE and GNOME\n\
@@ -252,13 +260,14 @@ mod tests {
     fn top_level_and_comments() {
         let (c, e) = parse(
             "# hi\nstart_after = 7\nthen = sleep   # comment\nthen_after=3\non_battery = no\n\
-             banner = /home/me/my art.txt\nfps = 24\n",
+             banner = /home/me/my art.txt\nfps = 24\nringtone = /home/me/ring.ogg\n",
         );
         assert!(e.is_empty(), "{e:?}");
         assert_eq!(c.ac, Times { start: 7, then: Then::Sleep, after: 3 });
         assert!(!c.on_battery);
         assert_eq!(c.banner.as_deref(), Some("/home/me/my art.txt"));
         assert_eq!(c.fps, Some(24.0));
+        assert_eq!(c.ringtone.as_deref(), Some("/home/me/ring.ogg"));
         assert_eq!(c.battery, None);
     }
 
@@ -308,6 +317,7 @@ mod tests {
             battery: Some(Times { start: 1, then: Then::Sleep, after: 2 }),
             banner: Some("name".into()),
             fps: Some(20.0),
+            ringtone: Some("none".into()),
             terminal: Some("konsole".into()),
             konsole_profile: Some("Glyphwave".into()),
             x11_locker: "slock".into(),
