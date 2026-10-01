@@ -276,7 +276,8 @@ impl Config {
 
         s += "\n# Which terminal opens the screensaver; empty picks the first installed of\n\
               # kitty foot alacritty ghostty wezterm konsole ptyxis gnome-terminal xterm.\n\
-              # konsole_profile names a Konsole profile of your own (e.g. no scrollbar).\n";
+              # konsole_profile names a Konsole profile of your own; without one it opens\n\
+              # black, with no scrollbar or margin.\n";
         let on = self.terminal.is_some() || self.konsole_profile.is_some();
         s += &format!("{}[terminal]\n", opt(on));
         s += &format!("{}terminal = {}\n", opt(self.terminal.is_some()), self.terminal.as_deref().unwrap_or("konsole"));
