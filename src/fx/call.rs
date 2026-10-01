@@ -213,8 +213,9 @@ impl Icon {
 }
 
 const WAVES: usize = 6;
-/// How long a wave takes to run out (s).
-const LIFE: f32 = 1.6;
+/// How long a wave takes to reach the screen's edge (s): longer than the
+/// chime's quiet stretch, so one is always on its way out.
+const LIFE: f32 = 2.4;
 
 /// The ring's beat: when each recent wave left the icon. It follows the
 /// built-in tone's notes, or else the onsets in what the sound card plays (a
@@ -222,6 +223,9 @@ const LIFE: f32 = 1.6;
 /// once a round.
 pub struct Pulse {
     ages: [f32; WAVES],
+    /// How hard each one rang: the first note of each pair, or a loud onset,
+    /// more than the second.
+    strength: [f32; WAVES],
     /// Waves sent so far: the newest is `sent - 1`, and it picks the colour.
     sent: usize,
     last_round: f32,
@@ -229,7 +233,7 @@ pub struct Pulse {
 
 impl Pulse {
     pub fn new() -> Pulse {
-        Pulse { ages: [f32::INFINITY; WAVES], sent: 0, last_round: -1.0 }
+        Pulse { ages: [f32::INFINITY; WAVES], strength: [0.0; WAVES], sent: 0, last_round: -1.0 }
     }
 
     /// A new ring: no waves yet, the first one at once.
@@ -249,19 +253,23 @@ impl Pulse {
                 let (r, prev) = (r % ROUND, self.last_round);
                 self.last_round = r;
                 // a note since last frame; r below prev is the next round
-                NOTES.iter().any(|&(at, _)| if r >= prev { prev < at && at <= r } else { at <= r })
+                let note = NOTES.iter().position(|&(at, _)| if r >= prev { prev < at && at <= r } else { at <= r });
+                note.map(|i| if i % 2 == 0 { 1.0 } else { 0.7 })
             }
-            None => (heard > 0.0 && newest > 0.12) || newest > ROUND,
+            None if heard > 0.0 && newest > 0.12 => Some((0.6 + 0.6 * heard).min(1.0)),
+            None => (newest > ROUND).then_some(1.0),
         };
-        if fire && ringing {
+        if let Some(k) = fire.filter(|_| ringing) {
             self.ages[self.sent % WAVES] = 0.0;
+            self.strength[self.sent % WAVES] = k;
             self.sent += 1;
         }
     }
 
-    /// The newest wave's kick, 1 as it leaves, gone in ~0.3 s.
+    /// The newest wave's kick, its strength as it leaves, gone in ~0.3 s.
     fn hit(&self) -> f32 {
-        if self.sent == 0 { 0.0 } else { (-self.ages[(self.sent - 1) % WAVES] * 8.0).exp() }
+        let n = self.sent.wrapping_sub(1) % WAVES;
+        if self.sent == 0 { 0.0 } else { self.strength[n] * (-self.ages[n] * 8.0).exp() }
     }
 }
 
@@ -301,41 +309,49 @@ pub fn draw(cv: &mut Canvas, cx: &Ctx, call: &Call, pulse: &Pulse, a: f32) {
     let mid = cx.w as i32 / 2;
     let hit = pulse.hit();
 
-    // the waves, round the icon's middle in braille dots (square on a 1:2 cell)
-    if let Some(s) = scale {
-        let (ox, oy) = (mid * 2, (top * 2 + ih) * 2);
-        let r0 = (iw.max(ih * 2) + 2) as f32;
-        let span = (cx.w as f32).max(cx.h as f32 * 2.0) * 0.45 / s as f32;
-        for k in 0..WAVES.min(pulse.sent) {
-            let n = pulse.sent - 1 - k;
-            let p = pulse.ages[n % WAVES] / LIFE;
-            if p >= 1.0 {
-                continue;
-            }
-            let r = r0 + span * (1.0 - (1.0 - p).powi(2));
-            let c = ic.colors[n % ic.colors.len()];
-            let c = c.mix(WHITE, 0.5 * (1.0 - p).powi(4)).scale(a * (1.0 - p).powf(1.5));
-            // two dots deep, so it reads as a wave and not a hairline
-            for r in [r, r - 1.5] {
-                let steps = (r * 7.0) as i32;
-                for i in 0..steps {
-                    let th = i as f32 / steps as f32 * std::f32::consts::TAU;
-                    cv.dot(ox + (r * th.cos()) as i32, oy + (r * th.sin()) as i32, c);
-                }
+    // the waves: rings out of the icon to the screen's edge, like the shock
+    // theme's, a bright head and a fading band behind it, in the app's
+    // colours (rows count double, so they're round)
+    let (ox, oy) = (mid as f32, top as f32 + ih as f32 / 2.0);
+    let r0 = iw as f32 / 2.0 + 2.0;
+    let maxr = (cx.w as f32).hypot(cx.h as f32 * 2.0) * 0.55;
+    for k in 0..WAVES.min(pulse.sent) {
+        let n = pulse.sent - 1 - k;
+        let p = pulse.ages[n % WAVES] / LIFE;
+        if p >= 1.0 {
+            continue;
+        }
+        let life = 1.0 - p;
+        let r = r0 + (maxr - r0) * (1.0 - life * life);
+        let c = ic.colors[n % ic.colors.len()];
+        let k = a * pulse.strength[n % WAVES] * (0.3 + 0.7 * life);
+        // the head starts near white and takes the colour as it runs out
+        for (j, (ch, white, kj)) in [('●', 0.7, 1.0), ('•', 0.3, 0.7), ('·', 0.0, 0.4)].into_iter().enumerate() {
+            let r = r - j as f32 * 1.1;
+            let col = c.mix(WHITE, white * life * life).scale(k * kj);
+            let steps = (r * 7.0).max(12.0) as usize;
+            for i in 0..steps {
+                let th = i as f32 / steps as f32 * std::f32::consts::TAU;
+                cv.put((ox + th.cos() * r).round() as i32, (oy + th.sin() * r * 0.5).round() as i32, ch, col);
             }
         }
     }
-    cv.resolve_dots();
 
-    // the icon, buzzing a cell either way as each note lands
+    // the icon: on each note it pops a little bigger, flashes and buzzes a
+    // cell either way, then settles
     if let Some(s) = scale {
         let buzz = if hit > 0.3 { if (cx.t * 30.0) as i32 % 2 == 0 { 1 } else { -1 } } else { 0 };
-        let x0 = mid - iw / 2 + buzz;
+        let z = 1.0 + 0.12 * hit;
+        let (zw, zh) = ((iw as f32 * z).round() as i32, (ih as f32 * z).round() as i32);
+        let (x0, y0) = (mid - zw / 2 + buzz, (oy - zh as f32 / 2.0).round() as i32);
         let k = a * (0.85 + 0.15 * hit);
-        for cy in 0..ih {
-            for cx_ in 0..iw {
-                let (px, py) = (cx_ as usize * s, cy as usize * 2 * s);
-                let (t, b) = (ic.px(px, py), ic.px(px, py + s));
+        // output cell → source pixel, nearest
+        let sx = |u: i32| ((u as f32 + 0.5) / zw as f32 * (iw as usize * s) as f32) as usize;
+        let sy = |v: f32| (v / (zh * 2) as f32 * (ih as usize * 2 * s) as f32) as usize;
+        for cy in 0..zh {
+            for cx_ in 0..zw {
+                let px = sx(cx_);
+                let (t, b) = (ic.px(px, sy(cy as f32 * 2.0 + 0.5)), ic.px(px, sy(cy as f32 * 2.0 + 1.5)));
                 let (g, i) = match (t, b) {
                     (0, 0) => continue,
                     (_, 0) => ('▀', t),
@@ -344,7 +360,7 @@ pub fn draw(cv: &mut Canvas, cx: &Ctx, call: &Call, pulse: &Pulse, a: f32) {
                     // detail, the higher index, takes the cell
                     _ => ('█', t.max(b)),
                 };
-                cv.put_top(x0 + cx_, top + cy, g, ic.color(i).scale(k));
+                cv.put_top(x0 + cx_, y0 + cy, g, ic.color(i).mix(WHITE, 0.3 * hit).scale(k));
             }
         }
     }
