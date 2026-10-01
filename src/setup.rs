@@ -434,7 +434,12 @@ fn run_out(cmd: &str, args: &[&str]) -> Option<String> {
 }
 
 /// The value the user set; None while it's at its default (no dconf entry).
+/// Debian and Ubuntu don't install the dconf command (dconf-cli), so there
+/// it's the effective value, and --remove sets it back rather than resetting.
 fn gs_user(schema: &str, key: &str) -> Option<String> {
+    if !launch::installed("dconf") {
+        return run_out("gsettings", &["get", schema, key]);
+    }
     // a relocatable schema says its path: `schema:/its/path/`
     let dir = schema.split_once(':').map_or_else(|| format!("/{}/", schema.replace('.', "/")), |(_, p)| p.to_string());
     run_out("dconf", &["read", &format!("{dir}{key}")]).filter(|v| !v.is_empty())
