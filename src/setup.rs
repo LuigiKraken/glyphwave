@@ -289,7 +289,7 @@ fn cmdline(bin: &Path, args: &str) -> String {
     if b.contains(' ') { format!("\"{b}\" {args}") } else { format!("{b} {args}") }
 }
 
-/// The modifiers of `Meta+Shift+V` as another desktop names them (`names`
+/// The modifiers of `Meta+Ctrl+L` as another desktop names them (`names`
 /// for super, ctrl, alt, shift, in that order), and its key, a letter in
 /// lower case.
 fn spell<'a>(k: &str, names: [&'a str; 4]) -> (Vec<&'a str>, String) {

@@ -74,7 +74,7 @@ impl Default for Config {
             hyprland_locker: "hyprlock".into(),
             sway_locker: "swaylock -f".into(),
             x11_locker: "i3lock -c 000000".into(),
-            shortcut: Some("Meta+Shift+V".into()),
+            shortcut: Some("Meta+Ctrl+L".into()),
         }
     }
 }

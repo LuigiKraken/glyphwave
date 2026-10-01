@@ -33,7 +33,7 @@ and it's gone.
    `~/.local/bin/glyphwave`.
 
 Videos and some players hold off the idle timer, so for music you can start
-it yourself with Meta+Shift+V or from the app menu.
+it yourself with Meta+Ctrl+L (next to Meta+L for lock) or from the app menu.
 
 ## What it does
 

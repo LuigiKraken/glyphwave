@@ -34,7 +34,7 @@ away. (An app that holds off idle instead, like a video, restarts the count.)
 Starting it by hand: a video, or music in some players, holds off idle, so
 the screensaver never starts on its own. Setup adds an app-menu entry
 (`~/.local/share/applications/glyphwave.desktop`, pin it to the dock) and a
-custom shortcut, `shortcut` in the config (Meta+Shift+V, `<Super><Shift>v`):
+custom shortcut, `shortcut` in the config (Meta+Ctrl+L, `<Super><Control>l`):
 its path goes into `org.gnome.settings-daemon.plugins.media-keys
 custom-keybindings`, with `name`, `command` and `binding` under
 `.../custom-keybindings/glyphwave/`. It shows in Settings > Keyboard >
