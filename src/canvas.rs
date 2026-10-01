@@ -2,6 +2,8 @@
 //! changed since the last frame (most of a visualizer frame is black), with
 //! cursor moves and SGR codes elided where the terminal state already matches.
 //! That diff is what keeps the output a few KB per frame instead of ~200 KB.
+//! Cells have a glyph and a colour; the background is always black, set once
+//! by the full erase.
 
 use crate::color::{BLACK, Rgb};
 use std::fmt::Write as _;
@@ -10,10 +12,9 @@ use std::fmt::Write as _;
 pub struct Cell {
     pub ch: char,
     pub fg: Rgb,
-    pub bg: Rgb,
 }
 
-pub const BLANK: Cell = Cell { ch: ' ', fg: BLACK, bg: BLACK };
+pub const BLANK: Cell = Cell { ch: ' ', fg: BLACK };
 
 pub struct Canvas {
     pub w: usize,
@@ -41,10 +42,8 @@ pub fn empty(ch: char) -> bool {
 }
 
 /// Colour distance below which a cell counts as unchanged. Slow colour drift
-/// would otherwise repaint every lit cell every frame for a 1/255 step. Blank
-/// cells (only a background colour) get a coarser threshold than glyphs.
+/// would otherwise repaint every lit cell every frame for a 1/255 step.
 const TOLERANCE: i32 = 3;
-const TOLERANCE_BACKDROP: i32 = 7;
 
 fn close_by(a: Rgb, b: Rgb, t: i32) -> bool {
     (a.0 as i32 - b.0 as i32).abs() <= t
@@ -171,7 +170,6 @@ impl Canvas {
         if let Some(i) = self.idx(x, y) {
             let c = &mut self.cells[i];
             c.fg = c.fg.scale(a);
-            c.bg = c.bg.scale(a);
         }
     }
 
@@ -251,7 +249,7 @@ impl Canvas {
             // erase to explicit black: the terminal's default background may be grey
             out.push_str(if self.truecolor { "\x1b[0m\x1b[48;2;0;0;0m\x1b[2J" } else { "\x1b[0m\x1b[48;5;16m\x1b[2J" });
         }
-        let (mut cur_fg, mut cur_bg): (Option<Rgb>, Option<Rgb>) = (None, self.full.then_some(BLACK));
+        let mut cur_fg: Option<Rgb> = None;
         let mut cursor: Option<(usize, usize)> = None;
         for y in 0..self.h {
             for x in 0..self.w {
@@ -260,47 +258,26 @@ impl Canvas {
                 if !self.truecolor {
                     // diff what the terminal will show, so drift inside one
                     // palette entry sends nothing
-                    (c.fg, c.bg) = (c.fg.snap256(), c.bg.snap256());
+                    c.fg = c.fg.snap256();
                 }
-                if c.fg.is_black() && c.ch != ' ' && c.bg.is_black() {
+                if c.fg.is_black() && c.ch != ' ' {
                     c.ch = ' '; // an invisible glyph is a blank; saves bytes
                 }
                 let f = self.front[i];
-                let tol = if c.ch == ' ' { TOLERANCE_BACKDROP } else { TOLERANCE };
-                let same = c.ch == f.ch
-                    && close_by(c.bg, f.bg, tol)
-                    && (c.ch == ' ' || close_by(c.fg, f.fg, tol));
+                let same = c.ch == f.ch && (c.ch == ' ' || close_by(c.fg, f.fg, TOLERANCE));
                 if same && !self.full {
                     continue;
                 }
                 if cursor != Some((x, y)) {
                     let _ = write!(out, "\x1b[{};{}H", y + 1, x + 1);
                 }
-                // one SGR sequence carrying whichever of fg / bg changed
-                let need_bg = cur_bg != Some(c.bg);
-                let need_fg = c.ch != ' ' && cur_fg != Some(c.fg);
-                if need_bg || need_fg {
-                    out.push_str("\x1b[");
-                    if need_fg {
-                        if self.truecolor {
-                            let _ = write!(out, "38;2;{};{};{}", c.fg.0, c.fg.1, c.fg.2);
-                        } else {
-                            let _ = write!(out, "38;5;{}", c.fg.xterm256());
-                        }
-                        cur_fg = Some(c.fg);
+                if c.ch != ' ' && cur_fg != Some(c.fg) {
+                    if self.truecolor {
+                        let _ = write!(out, "\x1b[38;2;{};{};{}m", c.fg.0, c.fg.1, c.fg.2);
+                    } else {
+                        let _ = write!(out, "\x1b[38;5;{}m", c.fg.xterm256());
                     }
-                    if need_bg {
-                        if need_fg {
-                            out.push(';');
-                        }
-                        if self.truecolor {
-                            let _ = write!(out, "48;2;{};{};{}", c.bg.0, c.bg.1, c.bg.2);
-                        } else {
-                            let _ = write!(out, "48;5;{}", c.bg.xterm256());
-                        }
-                        cur_bg = Some(c.bg);
-                    }
-                    out.push('m');
+                    cur_fg = Some(c.fg);
                 }
                 out.push(if self.console { console_glyph(c.ch) } else { c.ch });
                 cursor = Some((x + 1, y));
