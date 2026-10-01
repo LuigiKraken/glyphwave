@@ -3,7 +3,8 @@
 //! never goes still while the music is going.
 //!
 //! A continuous stereo skyline, mirrored like cava (bass in the middle, left
-//! channel to the left), with a dim reflection hanging under its baseline.
+//! channel to the left), with a dim reflection hanging under its baseline:
+//! a water line that stays put while the music moves the bars.
 //! It wears the banner's colours: each column takes the colour of the
 //! letters actually drawn above it (`Banner::tint`), so it follows the
 //! palette on the beat, a new cycle's palette, and an intro's own colours
@@ -94,10 +95,13 @@ impl Ribbon {
         }
 
         // typical height above the baseline, the reflection below it, and
-        // the headroom up to the banner that spikes may use
-        let up = (1.5 + 5.0 * int + 1.5 * lift).round() as usize;
-        let up = up.min(room * 2 / 3).max(1);
-        let down = up.div_ceil(2).clamp(1, room - up);
+        // the headroom up to the banner that spikes may use. The baseline is
+        // a fixed water line, sized for the tallest typical ribbon, so the
+        // music only moves the bars and their reflection, never the line.
+        let fit = |up: usize| up.min(room * 2 / 3).max(1);
+        let up = fit((1.5 + 5.0 * int + 1.5 * lift).round() as usize);
+        let top = fit(8);
+        let down = top.div_ceil(2).clamp(1, room - top);
         let max_up = room - down;
         let base = h - 1 - down as i32; // the baseline row, bars grow up from here
         let gain = (0.55 + 0.65 * int) * up as f32;
