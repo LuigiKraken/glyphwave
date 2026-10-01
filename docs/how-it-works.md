@@ -152,10 +152,13 @@ hooks in, and the research it builds on.
   with no scrollbar or padding (Konsole: `-p ScrollBarPosition=2
   -p TerminalMargin=0 -p ColorScheme=WhiteOnBlack`, the colour scheme only
   without a `konsole_profile`), so a terminal nobody customised looks clean
-  to the edge. kitty and xterm also hide the mouse pointer (kitty after a
-  second, xterm by turning it black); in the others, Konsole among them, it
-  stays where it was left. `contrib/` has the same recipes
-  by hand for KDE, GNOME, Hyprland, sway and X11.
+  to the edge. The mouse pointer: Konsole always hides it 5 s after the
+  mouse last moved (KDE's `KCursor` auto-hide, which no setting turns off),
+  but only in the window with the focus, so with several screens a pointer
+  resting on one of the others stays. kitty hides it after a second and
+  xterm turns it black; in the other terminals it stays where it was left.
+  `contrib/` has the same recipes by hand for KDE, GNOME, Hyprland, sway and
+  X11.
 - **One file.** Releases are a static binary (musl, x86_64 and ARM64), so it
   needs no Rust and no extra libraries.
 
