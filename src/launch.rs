@@ -109,10 +109,11 @@ pub fn command(term: &str, cfg: &Config, run: &[&str]) -> Option<Vec<String>> {
         ]), // fullscreen via a window rule
         "konsole" => {
             let mut c = vec!["konsole".to_string(), "--separate".to_string()];
-            // No scrollbar or margin over any profile; black under the
-            // margin and the part-cell leftover unless the user's profile
-            // picks its own colours.
-            c.extend(["-p", "ScrollBarPosition=2", "-p", "TerminalMargin=0"].map(String::from));
+            // No scrollbar and a 1 px margin over any profile; black under
+            // the margin and the part-cell leftover unless the user's profile
+            // picks its own colours. Not margin 0: at 1.5x scaling that puts
+            // a dark line between every two columns of blocks.
+            c.extend(["-p", "ScrollBarPosition=2", "-p", "TerminalMargin=1"].map(String::from));
             match &cfg.konsole_profile {
                 Some(p) => c.extend(["--profile".to_string(), p.clone()]),
                 None => c.extend(["-p", "ColorScheme=WhiteOnBlack"].map(String::from)),
@@ -320,9 +321,9 @@ mod tests {
     #[test]
     fn konsole_black_only_without_a_profile() {
         let c = command("konsole", &Config::default(), &["gw", "--screensaver"]).unwrap().join(" ");
-        assert!(c.starts_with("konsole --separate -p ScrollBarPosition=2 -p TerminalMargin=0 -p ColorScheme=WhiteOnBlack --fullscreen"), "{c}");
+        assert!(c.starts_with("konsole --separate -p ScrollBarPosition=2 -p TerminalMargin=1 -p ColorScheme=WhiteOnBlack --fullscreen"), "{c}");
         let cfg = Config { konsole_profile: Some("Mine".into()), ..Config::default() };
         let c = command("konsole", &cfg, &["gw", "--screensaver"]).unwrap().join(" ");
-        assert!(c.contains("-p TerminalMargin=0 --profile Mine --fullscreen") && !c.contains("ColorScheme"), "{c}");
+        assert!(c.contains("-p TerminalMargin=1 --profile Mine --fullscreen") && !c.contains("ColorScheme"), "{c}");
     }
 }

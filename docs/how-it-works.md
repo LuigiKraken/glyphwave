@@ -152,8 +152,9 @@ hooks in, and the research it builds on.
   hooks into it, and `glyphwave launch` opens the screensaver fullscreen in a
   terminal. It passes each terminal's own options for a black background
   with no scrollbar or padding (Konsole: `-p ScrollBarPosition=2
-  -p TerminalMargin=0 -p ColorScheme=WhiteOnBlack`, the colour scheme only
-  without a `konsole_profile`), so a terminal nobody customised looks clean
+  -p TerminalMargin=1 -p ColorScheme=WhiteOnBlack`, the colour scheme only
+  without a `konsole_profile`; margin 0 leaves a dark line between columns
+  of blocks at 1.5x scaling), so a terminal nobody customised looks clean
   to the edge. The mouse pointer: Konsole always hides it 5 s after the
   mouse last moved (KDE's `KCursor` auto-hide, which no setting turns off),
   but only in the window with the focus, so with several screens a pointer
