@@ -54,6 +54,8 @@ pub struct Config {
     pub hyprland_locker: String,
     pub sway_locker: String,
     pub x11_locker: String,
+    /// the key that starts it now; None = no key
+    pub shortcut: Option<String>,
 }
 
 impl Default for Config {
@@ -69,6 +71,7 @@ impl Default for Config {
             hyprland_locker: "hyprlock".into(),
             sway_locker: "swaylock -f".into(),
             x11_locker: "i3lock -c 000000".into(),
+            shortcut: Some("Meta+Shift+V".into()),
         }
     }
 }
@@ -153,6 +156,7 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             ("", "then_after") => minutes(&v).map(|m| c.ac.after = m),
             ("", "on_battery") => yes_no(&v).map(|y| c.on_battery = y),
             ("", "banner") => set(&mut c.banner, v),
+            ("", "shortcut") => set(&mut c.shortcut, if v == "none" { String::new() } else { v }),
             ("", "fps") => v.parse::<f32>().map(|f| c.fps = Some(f)).map_err(|_| format!("fps {v:?} isn't a number")),
             ("battery", "start_after") => minutes(&v).map(|m| bs = Some(m)),
             ("battery", "then") => then(&v).map(|t| bt = Some(t)),
@@ -198,6 +202,7 @@ impl Config {
             None => s += "# banner = logo         # logo, name, or a path to a text file\n",
         }
         s += &format!("fps = {}\n", self.fps.unwrap_or(30.0));
+        s += &format!("shortcut = {}      # starts it now; none for no key\n", self.shortcut.as_deref().unwrap_or("none"));
 
         let opt = |on: bool| if on { "" } else { "# " };
         s += "\n# Battery times, when they should differ from the ones above. KDE and GNOME\n\
@@ -311,6 +316,7 @@ mod tests {
             terminal: Some("konsole".into()),
             konsole_profile: Some("Glyphwave".into()),
             x11_locker: "slock".into(),
+            shortcut: None,
             ..Config::default()
         };
         let (back, e) = parse(&c.render());

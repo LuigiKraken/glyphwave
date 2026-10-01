@@ -1,8 +1,9 @@
 //! `glyphwave setup`: asks four questions, writes ~/.config/glyphwave/config
 //! and hooks glyphwave into the desktop's own idle timer: KDE's powerdevilrc,
 //! GNOME's settings plus a tiny idle watcher, or (Hyprland, sway, X11) the
-//! lines to paste. Never root: it only writes to the home folder, lists every
-//! change first, and keeps the originals so `--remove` puts them back exactly.
+//! lines to paste; plus an app-menu entry and a key that start it now. Never
+//! root: it only writes to the home folder, lists every change first, and
+//! keeps the originals so `--remove` puts them back exactly.
 
 use crate::config::{self, Config, Then, Times};
 use crate::launch;
@@ -288,6 +289,56 @@ fn cmdline(bin: &Path, args: &str) -> String {
     if b.contains(' ') { format!("\"{b}\" {args}") } else { format!("{b} {args}") }
 }
 
+/// The modifiers of `Meta+Shift+V` as another desktop names them (`names`
+/// for super, ctrl, alt, shift, in that order), and its key, a letter in
+/// lower case.
+fn spell<'a>(k: &str, names: [&'a str; 4]) -> (Vec<&'a str>, String) {
+    let (mods, key) = k.rsplit_once('+').unwrap_or(("", k));
+    let aka: [&[&str]; 4] = [&["meta", "super", "win"], &["ctrl", "control"], &["alt"], &["shift"]];
+    let on = (0..4).filter(|&i| mods.split('+').any(|m| aka[i].contains(&m.trim().to_lowercase().as_str()))).map(|i| names[i]);
+    let key = key.trim();
+    (on.collect(), if key.len() == 1 { key.to_lowercase() } else { key.to_string() })
+}
+
+fn data_dir() -> PathBuf {
+    std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()).map_or_else(|| home().join(".local/share"), PathBuf::from)
+}
+
+/// The app-menu entry, for every desktop; on KDE it also carries the key,
+/// which kglobalacceld picks up when the menu database is rebuilt.
+fn menu_entry(p: &mut Plan, bin: &Path, kde_key: Option<&str>) {
+    let key = kde_key.map_or(String::new(), |k| format!("X-KDE-Shortcuts={k}\n"));
+    let entry = format!(
+        "[Desktop Entry]\nType=Application\nName=glyphwave\nComment=Start the screensaver now\nExec={}\n\
+         Icon=preferences-desktop-screensaver\nTerminal=false\nCategories=AudioVideo;\n{key}",
+        cmdline(bin, "launch")
+    );
+    p.file(data_dir().join("applications/glyphwave.desktop"), entry);
+}
+
+/// The key for KDE, unless kglobalshortcutsrc already gives it to something
+/// else: KDE would then quietly leave glyphwave without one.
+fn kde_key<'a>(p: &mut Plan, key: &'a str) -> Option<&'a str> {
+    let same = |k: &str| spell(k, ["s", "c", "a", "h"]) == spell(key, ["s", "c", "a", "h"]);
+    let rc = std::fs::read_to_string(config::dir().join("kglobalshortcutsrc")).unwrap_or_default();
+    let mut group = "";
+    for l in rc.lines() {
+        if l.starts_with('[') {
+            group = l;
+        } else if let Some((_, v)) = l.split_once('=').filter(|_| group != "[services][glyphwave.desktop]") {
+            // `now,default,name`, or just `now` for an app; keys are tab-separated
+            if v.split(',').next().unwrap_or("").split('\t').any(same) {
+                p.warnings.push(format!(
+                    "{key} is already taken in KDE ({group}), so setup binds no key. Free it in \
+                     System Settings > Keyboard > Shortcuts and run setup again, or pick another shortcut in the config."
+                ));
+                return None;
+            }
+        }
+    }
+    Some(key)
+}
+
 /// The keys setup owns in each powerdevilrc profile, and Plasma 6's
 /// defaults for the ones it warns about (AC, battery), used when a key is
 /// missing: (group, key that switches it off, its off value, timeout key, AC, battery, what).
@@ -384,11 +435,39 @@ fn run_out(cmd: &str, args: &[&str]) -> Option<String> {
 
 /// The value the user set; None while it's at its default (no dconf entry).
 fn gs_user(schema: &str, key: &str) -> Option<String> {
-    run_out("dconf", &["read", &format!("/{}/{key}", schema.replace('.', "/"))]).filter(|v| !v.is_empty())
+    // a relocatable schema says its path: `schema:/its/path/`
+    let dir = schema.split_once(':').map_or_else(|| format!("/{}/", schema.replace('.', "/")), |(_, p)| p.to_string());
+    run_out("dconf", &["read", &format!("{dir}{key}")]).filter(|v| !v.is_empty())
 }
 
 fn gs_num(v: &str) -> u32 {
     v.rsplit(' ').next().and_then(|n| n.parse().ok()).unwrap_or(0)
+}
+
+const GS_KEYS: &str = "org.gnome.settings-daemon.plugins.media-keys";
+const GS_KEY_PATH: &str = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/glyphwave/";
+
+/// A custom keybinding: our path in the list, and its name, command and key.
+fn plan_gnome_key(p: &mut Plan, m: &Manifest, cfg: &Config, bin: &Path) {
+    let one = format!("{GS_KEYS}.custom-keybinding:{GS_KEY_PATH}");
+    let orig = |s: &str, k: &str| m.setting(s, k).unwrap_or_else(|| gs_user(s, k));
+    let list = orig(GS_KEYS, "custom-keybindings");
+    let mut want = [(GS_KEYS, "custom-keybindings"), (&one, "name"), (&one, "command"), (&one, "binding")].map(|(s, k)| (s, k, orig(s, k)));
+    if let Some(key) = &cfg.shortcut {
+        let (mods, k) = spell(key, ["<Super>", "<Control>", "<Alt>", "<Shift>"]);
+        let list = match list.as_deref() {
+            None | Some("@as []") | Some("[]") => format!("['{GS_KEY_PATH}']"),
+            Some(l) if l.contains(GS_KEY_PATH) => l.to_string(),
+            Some(l) => format!("{}, '{GS_KEY_PATH}']", l.trim_end_matches(']')),
+        };
+        let vals = [list, "'glyphwave'".into(), format!("'{}'", cmdline(bin, "launch")), format!("'{}{k}'", mods.concat())];
+        want.iter_mut().zip(vals).for_each(|(w, v)| w.2 = Some(v));
+    }
+    for (s, k, v) in want {
+        if v != gs_user(s, k) {
+            p.changes.push(Change::Setting(s.to_string(), k.to_string(), v));
+        }
+    }
 }
 
 fn plan_gnome(p: &mut Plan, m: &Manifest, cfg: &Config, bin: &Path) {
@@ -466,7 +545,11 @@ fn paste(d: Desktop, cfg: &Config, bin: &Path) -> (&'static str, String) {
             if !then.is_empty() {
                 s += &format!("\nlistener {{\n    timeout = {later}\n    on-timeout = {then}\n}}\n");
             }
-            ("~/.config/hypr/hypridle.conf", s + "\n# hyprland.conf, for wezterm: windowrulev2 = fullscreen, class:^(glyphwave)$\n")
+            s += "\n# hyprland.conf, for wezterm: windowrulev2 = fullscreen, class:^(glyphwave)$\n";
+            if let Some((mods, k)) = cfg.shortcut.as_deref().map(|k| spell(k, ["SUPER", "CTRL", "ALT", "SHIFT"])) {
+                s += &format!("# hyprland.conf, to start it now: bind = {}, {}, exec, {b} launch\n", mods.join(" "), k.to_uppercase());
+            }
+            ("~/.config/hypr/hypridle.conf", s)
         }
         Desktop::Sway => {
             let then = match t.then {
@@ -475,11 +558,14 @@ fn paste(d: Desktop, cfg: &Config, bin: &Path) -> (&'static str, String) {
                 Then::Sleep => format!("    timeout {later} 'systemctl suspend' \\\n"),
                 Then::Nothing => String::new(),
             };
-            let s = format!(
+            let mut s = format!(
                 "exec swayidle -w \\\n    timeout {start} '{b} launch' \\\n{then}    before-sleep '{}'\n\n\
                  for_window [app_id=\"glyphwave\"] fullscreen enable\nfor_window [class=\"glyphwave\"] fullscreen enable\n",
                 stop_lock(&cfg.sway_locker)
             );
+            if let Some((mods, k)) = cfg.shortcut.as_deref().map(|k| spell(k, ["Mod4", "Ctrl", "Mod1", "Shift"])) {
+                s += &format!("bindsym {}+{k} exec {b} launch\n", mods.join("+"));
+            }
             ("~/.config/sway/config", s)
         }
         _ => {
@@ -494,7 +580,11 @@ fn paste(d: Desktop, cfg: &Config, bin: &Path) -> (&'static str, String) {
             if !then.is_empty() {
                 s += &format!(" \\\n    --timer {} '{then}' ''", later - start);
             }
-            ("your session autostart (e.g. ~/.xinitrc)", s + "\n")
+            s += "\n";
+            if let Some((mods, k)) = cfg.shortcut.as_deref().map(|k| spell(k, ["super", "ctrl", "alt", "shift"])) {
+                s += &format!("\n# to start it now, bind `{b} launch` to a key in your WM, or in sxhkdrc:\n# {} + {k}\n#     {b} launch\n", mods.join(" + "));
+            }
+            ("your session autostart (e.g. ~/.xinitrc)", s)
         }
     }
 }
@@ -583,6 +673,12 @@ fn kde_reload() {
     println!("{}", if ok { "KDE has reloaded its settings." } else { "KDE didn't answer; the settings apply at the next login." });
 }
 
+/// Rebuild KDE's menu database; kglobalacceld then picks up the key at once.
+fn sycoca() {
+    let null = std::process::Stdio::null;
+    let _ = Command::new("kbuildsycoca6").stdout(null()).stderr(null()).status();
+}
+
 /// `glyphwave setup [--remove] [--dry-run] [--desktop NAME]`
 pub fn run(args: &[String]) -> i32 {
     let has = |a: &str| args.iter().any(|x| x == a);
@@ -623,9 +719,15 @@ fn setup(desktop: Option<Desktop>, dry: bool) -> i32 {
         p.file(bin.clone(), std::fs::read(&exe).unwrap_or_default());
     }
     let mut pasted = None;
+    let key = cfg.shortcut.as_deref().filter(|_| d == Desktop::Kde).and_then(|k| kde_key(&mut p, k));
+    menu_entry(&mut p, &bin, key);
+    let bound = if d == Desktop::Gnome { cfg.shortcut.as_deref() } else { key };
     match d {
         Desktop::Kde => plan_kde(&mut p, &m, &cfg, &bin),
-        Desktop::Gnome => plan_gnome(&mut p, &m, &cfg, &bin),
+        Desktop::Gnome => {
+            plan_gnome(&mut p, &m, &cfg, &bin);
+            plan_gnome_key(&mut p, &m, &cfg, &bin);
+        }
         _ => pasted = Some(paste(d, &cfg, &bin)),
     }
     if [cfg.ac, cfg.bat()].iter().any(|t| t.then == Then::Sleep) {
@@ -645,6 +747,9 @@ fn setup(desktop: Option<Desktop>, dry: bool) -> i32 {
     } else {
         println!("Setup will:");
         p.changes.iter().for_each(|c| println!("{}", describe(c)));
+        if let Some(k) = bound {
+            println!("  bind {k} to start it now (and add it to the app menu)");
+        }
         println!("Originals are kept in {} for `glyphwave setup --remove`.", tilde(&m.dir));
         if dry {
             println!("(dry run: nothing written)");
@@ -662,6 +767,7 @@ fn setup(desktop: Option<Desktop>, dry: bool) -> i32 {
         }
         if d == Desktop::Kde && !p.changes.is_empty() {
             kde_reload();
+            sycoca();
         }
         if d == Desktop::Gnome {
             use std::os::unix::process::CommandExt;
@@ -704,6 +810,7 @@ fn undo(dry: bool) -> i32 {
         println!("Nothing changed.");
         return i32::from(!dry);
     }
+    let menu = std::fs::read_to_string(data_dir().join("applications/glyphwave.desktop")).unwrap_or_default();
     let mut ok = true;
     for e in m.entries.iter().rev() {
         let r = match e {
@@ -729,6 +836,9 @@ fn undo(dry: bool) -> i32 {
     let _ = std::fs::remove_dir(config::dir().join("glyphwave")); // only if empty
     if m.entries.iter().any(|e| matches!(e, Entry::Saved(_, p) | Entry::Created(p) if p.ends_with("powerdevilrc") || p.ends_with("kscreenlockerrc"))) {
         kde_reload();
+    }
+    if menu.contains("X-KDE-Shortcuts=") {
+        sycoca(); // KDE lets go of the key
     }
     println!("Done.");
     0
@@ -759,6 +869,15 @@ mod tests {
         assert_eq!(ini_set("", "Daemon", "Timeout", Some("15")), "[Daemon]\nTimeout=15\n");
         // a key that only shares a prefix is a different key
         assert_eq!(ini_get("[A]\nTimeoutSec=1\n", "A", "Timeout"), None);
+    }
+
+    #[test]
+    fn spell_shortcuts() {
+        let gnome = ["<Super>", "<Control>", "<Alt>", "<Shift>"];
+        assert_eq!(spell("Meta+Shift+V", gnome), (vec!["<Super>", "<Shift>"], "v".to_string()));
+        assert_eq!(spell("shift+Super+v", gnome), spell("Meta+Shift+V", gnome));
+        assert_ne!(spell("Meta+V", gnome), spell("Meta+Shift+V", gnome));
+        assert_eq!(spell("Ctrl+Alt+F12", gnome), (vec!["<Control>", "<Alt>"], "F12".to_string()));
     }
 
     #[test]
