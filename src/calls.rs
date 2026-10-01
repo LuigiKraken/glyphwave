@@ -12,6 +12,7 @@
 //! closes or replaces the notification, or for `RING` at most.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use zbus::blocking::{Connection, MessageIterator};
@@ -33,8 +34,14 @@ pub struct Call {
     gtk: Option<(String, String)>,
 }
 
+impl Call {
+    pub fn ringing(&self, now: Instant) -> bool {
+        now < self.until
+    }
+}
+
 pub struct Calls {
-    ring: Arc<Mutex<Option<Call>>>,
+    ring: Arc<Slot>,
 }
 
 /// Lowercase key in an app name or desktop entry → the name shown.
@@ -138,19 +145,29 @@ fn hint(h: &Hints, k: &str) -> String {
     h.get(k).and_then(|v| String::try_from(v.try_clone().ok()?).ok()).unwrap_or_default()
 }
 
-fn ring(slot: &Mutex<Option<Call>>, (app, caller): (String, String), id: u32, gtk: Option<(String, String)>) {
-    *slot.lock().unwrap() = Some(Call { app, caller, until: Instant::now() + RING, id, gtk });
+/// The ring, and a counter bumped on every change so main only has to
+/// look at an atomic each frame.
+#[derive(Default)]
+struct Slot {
+    call: Mutex<Option<Call>>,
+    changes: AtomicU32,
+}
+
+fn ring(slot: &Slot, (app, caller): (String, String), id: u32, gtk: Option<(String, String)>) {
+    *slot.call.lock().unwrap() = Some(Call { app, caller, until: Instant::now() + RING, id, gtk });
+    slot.changes.fetch_add(1, Ordering::Release);
 }
 
 /// End the ring if `is` says the message is about its notification.
-fn end_if(slot: &Mutex<Option<Call>>, is: impl Fn(&Call) -> bool) {
-    let mut g = slot.lock().unwrap();
+fn end_if(slot: &Slot, is: impl Fn(&Call) -> bool) {
+    let mut g = slot.call.lock().unwrap();
     if g.as_ref().is_some_and(is) {
         *g = None;
+        slot.changes.fetch_add(1, Ordering::Release);
     }
 }
 
-fn watch(conn: Connection, slot: Arc<Mutex<Option<Call>>>) {
+fn watch(conn: Connection, slot: Arc<Slot>) {
     // the Notify call that rang, until the server's reply gives its id
     let mut pending: Option<(String, u32)> = None;
     for m in MessageIterator::from(&conn).flatten() {
@@ -176,7 +193,7 @@ fn watch(conn: Connection, slot: Arc<Mutex<Option<Call>>>) {
                 let serial = h.reply_serial().map(|s| s.get()).unwrap_or(0);
                 if pending.as_ref().is_some_and(|(s, n)| *s == to && *n == serial) {
                     pending = None;
-                    if let (Ok(id), Some(c)) = (body.deserialize::<u32>(), slot.lock().unwrap().as_mut()) {
+                    if let (Ok(id), Some(c)) = (body.deserialize::<u32>(), slot.call.lock().unwrap().as_mut()) {
                         c.id = id;
                     }
                 }
@@ -204,7 +221,7 @@ fn watch(conn: Connection, slot: Arc<Mutex<Option<Call>>>) {
 
 impl Calls {
     pub fn start() -> Calls {
-        let ring = Arc::new(Mutex::new(None));
+        let ring = Arc::new(Slot::default());
         // its own connection: a monitor may not send anything any more
         if let Ok(conn) = Connection::session() {
             let rules = [
@@ -224,13 +241,23 @@ impl Calls {
         Calls { ring }
     }
 
-    /// The call ringing now, if any.
-    pub fn ringing(&self) -> Option<Call> {
-        let mut g = self.ring.lock().unwrap();
-        if g.as_ref().is_some_and(|c| Instant::now() >= c.until) {
-            *g = None;
+    /// Bring `call` up to date: a new ring is copied in (the only time this
+    /// allocates); an ended one keeps its text for the fade-out but stops
+    /// ringing. `seen` is the change counter last looked at.
+    pub fn sync(&self, seen: &mut u32, call: &mut Option<Call>) {
+        let changes = self.ring.changes.load(Ordering::Acquire);
+        if changes == *seen {
+            return;
         }
-        g.clone()
+        *seen = changes;
+        match self.ring.call.lock().unwrap().as_ref() {
+            Some(c) => *call = Some(c.clone()),
+            None => {
+                if let Some(c) = call {
+                    c.until = c.until.min(Instant::now());
+                }
+            }
+        }
     }
 
     /// `--test`: ring as if `app` had sent this notification.

@@ -51,8 +51,8 @@ TEST KEYS (--test): 1–0 the themes in the order above · d t s w fake a
   [ ] calmer / louder demo · o debug (in place of d)
 
 A muted sink, or one at 0 %, counts as paused. While a call rings (read from
-the desktop's call notification) its caller shows over everything, and any
-key or the mouse ends glyphwave, the music keys too.
+the desktop's call notification) the banner makes way for the app's icon and
+the caller, and any key or the mouse ends glyphwave, the music keys too.
 ";
 
 struct Opts {
@@ -178,7 +178,8 @@ fn main() {
     let mut ribbon_f = Fader::default();
     let mut lift = Fader::default();
     let mut call_f = Fader::default();
-    let mut shown_call = None; // the card's call, kept while it fades out
+    // the last call seen, kept after it ends for the fade-out
+    let (mut call, mut call_seen) = (None::<calls::Call>, 0u32);
     let mut idle_layers = [Fader::default(); 2]; // stars, rain
     let mut idle_forced = o.idle;
     let mut debug = o.debug;
@@ -207,7 +208,8 @@ fn main() {
             if !input.is_empty() {
                 let t = start.elapsed().as_secs_f32();
                 // while a call rings every key ends glyphwave, music keys too
-                let ringing = calls.ringing().is_some();
+                calls.sync(&mut call_seen, &mut call);
+                let ringing = call.as_ref().is_some_and(|c| c.ringing(Instant::now()));
                 if o.screensaver {
                     if t <= grace {
                         input.clear(); // swallow the launch keypress
@@ -346,16 +348,17 @@ fn main() {
             let room = (h as i32 - banner.bottom() - 1).max(0) as usize;
             ribbon.draw(&mut cv, &cx, room, ribbon_f.a(), lift.a(), banner.tint());
         }
+        // a ringing call: the banner makes way (its outro), then the call
+        // view fades in; once it has faded out again the banner comes back
+        calls.sync(&mut call_seen, &mut call);
+        let ringing = call.as_ref().is_some_and(|c| c.ringing(now));
+        banner.away = ringing || call_f.on();
         banner.draw(&mut cv, &cx, want_music, &mut dir, &mut spec);
         banner.sample(&cv, dt);
         fx::label::draw(&mut cv, &cx, &track, label_f.a());
-        let call = calls.ringing();
-        call_f.target = if call.is_some() { 1.0 } else { 0.0 };
-        call_f.step(dt, if call.is_some() { 0.3 } else { 0.6 });
-        if call.is_some() {
-            shown_call = call;
-        }
-        if let Some(c) = shown_call.as_ref().filter(|_| call_f.on()) {
+        call_f.target = if ringing && (banner.gone() || !banner.fits) { 1.0 } else { 0.0 };
+        call_f.step(dt, if ringing { 0.4 } else { 0.6 });
+        if let Some(c) = call.as_ref().filter(|_| call_f.on()) {
             fx::call::draw(&mut cv, &cx, c, call_f.a());
         }
         if debug {

@@ -74,6 +74,9 @@ pub struct Banner {
     /// the ribbon (sampled from what was drawn, whatever drew it).
     tint: Vec<[f32; 3]>,
     tint_rgb: Vec<Rgb>,
+    /// Make way (a call rings): end the cycle with its outro, at double
+    /// speed, and wait in the gap until this clears.
+    pub away: bool,
 }
 
 impl Banner {
@@ -130,6 +133,7 @@ impl Banner {
             wait_t: 0.0,
             tint: Vec::new(),
             tint_rgb: Vec::new(),
+            away: false,
         }
     }
 
@@ -332,6 +336,11 @@ impl Banner {
         }
     }
 
+    /// Whether the letters are off screen (between an outro and the next intro).
+    pub fn gone(&self) -> bool {
+        matches!(self.phase, Phase::Gap(_))
+    }
+
     /// True while the matrix intro runs (the rain layer joins in).
     pub fn wants_rain(&self) -> bool {
         matches!(self.phase, Phase::Intro) && self.current == Some(Kind::Matrix)
@@ -402,11 +411,12 @@ impl Banner {
             tempo * (1.0 + 0.5 * f.intensity)
         } else {
             1.0
-        };
+        } * if self.away { 2.0 } else { 1.0 };
+        let away = self.away;
         match &mut self.phase {
             Phase::Gap(t) => {
                 *t -= dt;
-                if *t > 0.0 {
+                if *t > 0.0 || away {
                     return;
                 }
                 self.start_cycle(cx, music, dir);
@@ -422,7 +432,9 @@ impl Banner {
             Phase::Hold(t) => match self.theme {
                 None => {
                     *t -= dt;
-                    if music {
+                    if away {
+                        *t = 0.0;
+                    } else if music {
                         *t = t.min(0.4); // music started: move on to a themed cycle
                     }
                     if *t <= 0.0 {
@@ -433,7 +445,7 @@ impl Banner {
                 Some(_) => {
                     self.react = (self.react + dt / 0.8).min(1.0);
                     dir.update(f, dt);
-                    let cue = if !music { Cue::Fade } else { dir.cue };
+                    let cue = if !music || away { Cue::Fade } else { dir.cue };
                     if cue != Cue::None && self.waiting.is_none() {
                         // a theme that moves the letters brings them home first
                         self.waiting = Some(cue);
