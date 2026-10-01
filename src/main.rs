@@ -62,6 +62,7 @@ struct Opts {
     trace: bool,
     theme: Option<String>,
     truecolor: bool,
+    console: bool,
 }
 
 fn opts() -> Opts {
@@ -78,6 +79,7 @@ fn opts() -> Opts {
         trace: false,
         theme: None,
         truecolor: term::truecolor(),
+        console: std::env::var("TERM").is_ok_and(|t| t == "linux"),
     };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -173,7 +175,7 @@ fn main() {
     }
 
     let (mut w, mut h) = o.size.unwrap_or_else(term::size);
-    let mut cv = Canvas::new(w, h, o.truecolor);
+    let mut cv = Canvas::new(w, h, o.truecolor, o.console);
     let palette = fallback_palette();
     let grad = Gradient::looping(&palette);
 
@@ -259,7 +261,7 @@ fn main() {
             let (nw, nh) = term::size();
             if (nw, nh) != (w, h) || frames == 0 {
                 (w, h) = (nw, nh);
-                cv = Canvas::new(w, h, o.truecolor);
+                cv = Canvas::new(w, h, o.truecolor, o.console);
             }
             cv.force_full();
         }
@@ -379,8 +381,9 @@ fn main() {
     term.restore();
     if cap.missing {
         eprintln!(
-            "glyphwave: parec not found, so no music visuals. It comes with pulseaudio-utils \
-             (Debian, Ubuntu, Fedora) or libpulse (Arch) and works with PipeWire's pulse layer."
+            "glyphwave: neither parec nor pw-record found, so no music visuals. parec comes with \
+             pulseaudio-utils (Debian, Ubuntu) or libpulse (Arch), pw-record with pipewire-utils \
+             (Fedora) or pipewire-bin (Debian, Ubuntu)."
         );
     }
     if o.stats {

@@ -1,6 +1,7 @@
 //! Audio capture from the default sink's monitor via `parec` (PipeWire's pulse
-//! shim). Float32 stereo at 48 kHz — PipeWire's native rate, so no resampling.
-//! A reader thread keeps the newest samples in a ring; the DSP copies the
+//! shim), or `pw-record` where the pulse tools aren't installed (Fedora ships
+//! pipewire-utils, not always pulseaudio-utils). Float32 stereo at 48 kHz —
+//! PipeWire's native rate, so no resampling. A reader thread keeps the newest samples in a ring; the DSP copies the
 //! window it needs each frame (cava does the same with its input buffer).
 
 use std::io::Read;
@@ -35,18 +36,56 @@ impl Ring {
     }
 }
 
+/// Capture tools in order of preference. Both write raw float32le stereo
+/// frames to stdout, so one reader serves either.
+const TOOLS: [&str; 2] = ["parec", "pw-record"];
+
+fn command(tool: &str) -> Command {
+    let mut c = Command::new(tool);
+    if tool == "parec" {
+        c.args([
+            "-d",
+            "@DEFAULT_MONITOR@",
+            "--format=float32le",
+            &format!("--rate={RATE}"),
+            "--channels=2",
+            "--latency-msec=15",
+            "--raw",
+            "--client-name=glyphwave",
+        ]);
+    } else {
+        // capture.sink has the session manager link it to the default sink's
+        // monitor, and follow the default when it changes
+        c.args([
+            "--format=f32",
+            &format!("--rate={RATE}"),
+            "--channels=2",
+            "--latency=15ms",
+            "--raw",
+            "-P",
+            "stream.capture.sink=true",
+            "-P",
+            "node.name=glyphwave",
+            "-",
+        ]);
+    }
+    c
+}
+
 pub struct Capture {
     child: Option<Child>,
-    /// When a failed or dead `parec` may be tried again.
+    /// When a failed or dead capture tool may be tried again.
     retry: Option<Instant>,
-    /// `parec` isn't installed; said once on exit.
+    /// Index into TOOLS of the first one not known to be missing.
+    tool: usize,
+    /// Neither `parec` nor `pw-record` is installed; said once on exit.
     pub missing: bool,
     pub ring: Arc<Mutex<Ring>>,
 }
 
 impl Capture {
     pub fn new() -> Capture {
-        Capture { child: None, retry: None, missing: false, ring: Arc::new(Mutex::new(Ring::new())) }
+        Capture { child: None, retry: None, tool: 0, missing: false, ring: Arc::new(Mutex::new(Ring::new())) }
     }
 
     pub fn running(&mut self) -> bool {
@@ -61,28 +100,17 @@ impl Capture {
             return;
         }
         self.stop();
-        // without parec (or a sound server) don't respawn it every frame
+        // without a capture tool (or a sound server) don't respawn it every frame
         self.retry = Some(Instant::now() + Duration::from_secs(5));
-        let child = Command::new("parec")
-            .args([
-                "-d",
-                "@DEFAULT_MONITOR@",
-                "--format=float32le",
-                &format!("--rate={RATE}"),
-                "--channels=2",
-                "--latency-msec=15",
-                "--raw",
-                "--client-name=glyphwave",
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn();
-        let mut child = match child {
-            Ok(c) => c,
-            Err(e) => {
-                self.missing |= e.kind() == std::io::ErrorKind::NotFound;
+        let mut child = loop {
+            let Some(tool) = TOOLS.get(self.tool) else {
+                self.missing = true;
                 return;
+            };
+            match command(tool).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
+                Ok(c) => break c,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => self.tool += 1,
+                Err(_) => return,
             }
         };
         let mut out = child.stdout.take().unwrap();

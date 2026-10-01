@@ -23,6 +23,8 @@ pub struct Canvas {
     full: bool,
     /// 24-bit colour codes; otherwise the nearest of the xterm 256.
     truecolor: bool,
+    /// Linux console: swap in glyphs its fonts have.
+    console: bool,
     out: String,
     /// Sub-cell braille dots, 2×4 per cell; bit layout per Unicode braille.
     dots: Vec<u8>,
@@ -52,8 +54,34 @@ fn close_by(a: Rgb, b: Rgb, t: i32) -> bool {
 
 const BRAILLE_BITS: [[u8; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
 
+/// Stand-ins for the Linux console, whose fonts (default8x16, Terminus,
+/// Fixed) have full blocks, light and medium shades and ASCII but little else
+/// we draw. Everything not listed passes through.
+fn console_glyph(ch: char) -> char {
+    match ch {
+        '▁' | '▂' => '_',
+        '▖' | '▗' => '.',
+        '▃' | '▄' | '▅' | '▀' | '▚' | '▞' | '▓' => '▒',
+        '▆' | '▇' | '▉' | '▙' | '▛' | '▜' | '▟' => '█',
+        '▘' | '▝' | '˙' => '\'',
+        '▔' => '-',
+        '━' => '=',
+        '◦' => 'o',
+        '◎' => 'O',
+        '◉' => '0',
+        '●' | '¤' => '*',
+        '∙' => '·',
+        '▶' => '>',
+        '╱' => '/',
+        '╲' => '\\',
+        '\u{2800}'..='\u{28ff}' => if (ch as u32 & 0xff).count_ones() <= 2 { '.' } else { ':' },
+        'ｦ'..='ﾟ' => b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"[ch as usize % 36] as char,
+        _ => ch,
+    }
+}
+
 impl Canvas {
-    pub fn new(w: usize, h: usize, truecolor: bool) -> Canvas {
+    pub fn new(w: usize, h: usize, truecolor: bool, console: bool) -> Canvas {
         Canvas {
             w,
             h,
@@ -61,6 +89,7 @@ impl Canvas {
             front: vec![BLANK; w * h],
             full: true,
             truecolor,
+            console,
             out: String::with_capacity(1 << 16),
             dots: vec![0; w * h],
             dot_col: vec![BLACK; w * h],
@@ -273,7 +302,7 @@ impl Canvas {
                     }
                     out.push('m');
                 }
-                out.push(c.ch);
+                out.push(if self.console { console_glyph(c.ch) } else { c.ch });
                 cursor = Some((x + 1, y));
                 self.front[i] = c;
             }

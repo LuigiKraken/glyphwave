@@ -1,0 +1,59 @@
+# On a v* tag: build static musl binaries for x86_64 and aarch64 (each on its
+# own native runner, so the smoke test runs the real thing) and attach them,
+# their sha256 files and install.sh to a GitHub Release.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      TARGET: ${{ matrix.arch }}-unknown-linux-musl
+      NAME: glyphwave-${{ matrix.arch }}-linux
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          rustup toolchain install stable --profile minimal --target "$TARGET"
+          cargo +stable build --release --locked --target "$TARGET"
+      - name: Check it is static and runs
+        run: |
+          bin="target/$TARGET/release/glyphwave"
+          file "$bin"
+          file "$bin" | grep -Eq 'statically linked|static-pie linked'
+          "$bin" --demo --size 80x24 --frames 30 </dev/null >/dev/null
+          mkdir dist
+          cp "$bin" "dist/$NAME"
+          cd dist && sha256sum "$NAME" > "$NAME.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* install.sh --title "$GITHUB_REF_NAME" --generate-notes
