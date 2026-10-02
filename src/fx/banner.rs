@@ -18,7 +18,7 @@ use super::spectrum::Spectrum;
 use super::themes::{Geom, Hold, Theme};
 use super::{Ctx, Look, Rng};
 use crate::canvas::Canvas;
-use crate::color::{Rgb, VIVID, WHITE, saturate, vivid};
+use crate::color::{Rgb, SCHEMES, WHITE, harmony};
 use crate::scene::{Cue, Director};
 
 pub struct Ch {
@@ -72,7 +72,8 @@ pub struct Banner {
     rng: Rng,
     /// The running cycle's colours, shared with the theme and the ribbon.
     look: Look,
-    last_vivid: usize,
+    /// The last music cycle's base hue, so the next one moves well away.
+    last_hue: f32,
     /// A switch the director called, held until the letters are back home
     /// (and for how long it has waited).
     waiting: Option<Cue>,
@@ -109,7 +110,7 @@ impl Banner {
             react: 0.0,
             rng: Rng::seeded(),
             look: Look::new(&crate::color::fallback_palette()),
-            last_vivid: usize::MAX,
+            last_hue: -1000.0,
             waiting: None,
             wait_t: 0.0,
             tint: Vec::new(),
@@ -163,23 +164,24 @@ impl Banner {
         }
     }
 
-    /// A music cycle's stops: the theme's own, a neon set (likelier the
-    /// busier it gets), or the base palette, saturated.
+    /// A music cycle's stops: the theme's own, or a scheme round a random
+    /// hue at least 60° from the last cycle's. Calm music wears close,
+    /// softer hues; the busier it gets, the wider the scheme and the
+    /// stronger the colour.
     fn pick_stops(&mut self, cx: &Ctx, theme: Option<Theme>) -> Vec<Rgb> {
         let Some(t) = theme else { return cx.palette.to_vec() };
         if let Some(p) = t.palette() {
             return p;
         }
-        if self.rng.chance(0.35 + 0.55 * cx.f.intensity) {
-            let mut i = self.rng.below(VIVID.len());
-            if i == self.last_vivid {
-                i = (i + 1) % VIVID.len();
-            }
-            self.last_vivid = i;
-            vivid(i)
-        } else {
-            saturate(cx.palette)
+        let mut hue = self.rng.range(0.0, 360.0);
+        if (hue - self.last_hue).rem_euclid(360.0).min((self.last_hue - hue).rem_euclid(360.0)) < 60.0 {
+            hue += 180.0;
         }
+        self.last_hue = hue.rem_euclid(360.0);
+        let hype = cx.f.intensity.clamp(0.0, 1.0);
+        let reach = 1.0 + hype * (SCHEMES.len() - 1) as f32;
+        let scheme = (self.rng.range(0.0, reach) as usize).min(SCHEMES.len() - 1);
+        harmony(hue, scheme, hype)
     }
 
     fn chars_view(&self) -> (Vec<P>, Vec<usize>, Vec<usize>) {
