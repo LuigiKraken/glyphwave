@@ -52,6 +52,15 @@ hooks in, and the research it builds on.
     jumps the palette.
   - `warp`: hyperspace. Glyphs stream out from the banner's edges and speed
     up as they go. How many follows intensity; kicks burst and drops flood.
+  - `shatter`: white-hot cracks run through the banner one by one, and
+    once it's cracked through it blows apart on the downbeat (or at once on
+    a drop). Every other time the pieces slam into the walls, slide down to
+    the ribbon's water line, lie there throbbing with the kick, vibrate,
+    and levitate back into place; the rest of the time they float round the
+    screen for three bars, surging on the kicks, and swirl home. The next
+    theme takes over on the landing. A build draws this theme and holds the
+    last crack for the drop. The number keys reach the first ten themes;
+    `--theme shatter` runs this one on its own.
 
   - Under all of it runs a **ribbon** along the bottom edge: a mirrored stereo
     skyline with a dim reflection, on through intros, outros and the gaps

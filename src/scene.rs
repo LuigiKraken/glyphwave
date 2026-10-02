@@ -10,6 +10,7 @@
 //!   waits for the next lull or downbeat;
 //! * the timer (16 or 32 bars, or 30–60 s) only marks a hold as due; a due
 //!   hold still waits for a lull or a downbeat, and gives up waiting at 10 s;
+//! * a build draws `shatter`, which waits for the drop;
 //! * quieter music draws calmer themes, louder music busier ones; a theme
 //!   picked before the analysis had heard the music (it was already playing
 //!   hard when the screensaver came up) is cut for a busy one within seconds.
@@ -153,6 +154,10 @@ impl Director {
         // intensity lags a lull by a second or two: aim lower after one
         let e = if self.calm_next { f.intensity * 0.5 } else { f.intensity };
         let pool: Vec<Theme> = ALL.iter().copied().filter(|t| !self.recent.contains(t)).collect();
+        // a build: shatter, to be in one piece for the drop
+        if f.tension > 0.25 && pool.contains(&Theme::Shatter) {
+            return Theme::Shatter;
+        }
         if self.busy_next {
             // one of the three busiest, not always the same one
             let mut busy = pool.clone();

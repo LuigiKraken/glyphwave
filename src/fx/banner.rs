@@ -444,7 +444,14 @@ impl Banner {
                 Some(_) => {
                     self.react = (self.react + dt / 0.8).min(1.0);
                     dir.update(f, dt);
-                    let cue = if !music || self.pending.is_some() { Cue::Fade } else { dir.cue };
+                    // a theme that plays itself out (shatter) hands over at once
+                    let cue = if !music || self.pending.is_some() {
+                        Cue::Fade
+                    } else if self.hold.done {
+                        Cue::Cut
+                    } else {
+                        self.hold.take_cue(dir.cue)
+                    };
                     if cue != Cue::None && self.waiting.is_none() {
                         // a theme that moves the letters brings them home first
                         self.waiting = Some(cue);
