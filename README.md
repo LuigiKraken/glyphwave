@@ -76,7 +76,8 @@ and leaves again.
 
 When a player is playing (anything that speaks MPRIS: Spotify, browsers, most
 Linux players), each cycle gets a music theme: `levels`, `pulse`, `shock`,
-`wave`, `fire`, `matrix`, `glitch`, `springs`, `bounce` or `warp`. They
+`wave`, `fire`, `matrix`, `glitch`, `springs`, `bounce`, `warp` or
+`shatter`. They
 follow the kicks, snares and hi-hats. Themes change when the music does:
 a quiet section fades into a calmer theme and a drop cuts straight to a busier
 one. A stereo spectrum runs along the bottom in the banner's colours.

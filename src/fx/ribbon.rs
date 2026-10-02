@@ -95,10 +95,9 @@ impl Ribbon {
         let fit = |up: usize| up.min(room * 2 / 3).max(1);
         let hot = ((int - 0.5) / 0.35).clamp(0.0, 1.0);
         let up = fit((1.0 + 9.0 * int * int + 1.5 * lift + 2.0 * wild).round() as usize);
-        let top = fit(8);
-        let down = top.div_ceil(2).clamp(1, room - top);
+        let base = waterline(h, room); // the baseline row, bars grow up from here
+        let down = (h - 1 - base) as usize;
         let max_up = room - down;
-        let base = h - 1 - down as i32; // the baseline row, bars grow up from here
         let gain = (0.55 + 0.65 * int) * up as f32 * (1.0 + 0.5 * hot * f.kick_env.min(1.0));
         let bright = (0.4 + 0.6 * int + 0.25 * self.beat).min(1.0) * cx.light * a;
         let flash = f.kick_env.min(1.0) * ((int - 0.35) / 0.4).clamp(0.0, 1.0);
@@ -236,4 +235,15 @@ impl Calm {
     pub fn fed(&self) -> &crate::dsp::Features {
         &self.f
     }
+}
+
+/// The ribbon's water line on a screen `h` rows tall with `room` rows under
+/// the banner: the row its bars grow up from (sized for the tallest typical
+/// ribbon, so it never moves). With no room for a ribbon, the bottom row.
+pub fn waterline(h: i32, room: usize) -> i32 {
+    if room < 3 {
+        return h - 1;
+    }
+    let top = 8.min(room * 2 / 3).max(1);
+    h - 1 - top.div_ceil(2).clamp(1, room - top) as i32
 }

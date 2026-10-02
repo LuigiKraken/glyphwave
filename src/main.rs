@@ -62,7 +62,7 @@ USAGE: glyphwave [options]
   --debug           feature overlay (bpm, onsets, theme)
   --trace           print beat/onset/drop events to stderr
   --theme NAME      always use one music theme (levels pulse shock wave fire
-                    matrix glitch springs bounce warp; floor, the bar floor
+                    matrix glitch springs bounce warp shatter; floor, the bar floor
                     in place of the ribbon, runs only when asked for)
   -V, --version     print the version
 
