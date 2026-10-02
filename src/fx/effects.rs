@@ -7,7 +7,7 @@
 //! the phases, symbols, colours and easings follow the TTE originals, with
 //! durations derived from TTE's per-tick speeds at 60 fps.
 
-use super::{Ease, Rng, ease};
+use super::{Ease, Rng, ease, hash, pick, ramp};
 use crate::color::{Rgb, WHITE};
 
 pub type P = (f32, f32);
@@ -19,7 +19,7 @@ pub enum Glyph {
     /// Play the sequence `n` times across the stage.
     Seq(&'static str, u32),
     /// A new random symbol from the set every ~70 ms.
-    Rand(&'static str),
+    Rand(&'static [char]),
 }
 
 #[derive(Clone)]
@@ -143,18 +143,6 @@ pub struct Effect {
     rng: Rng,
 }
 
-fn hash(a: u32, b: u32) -> u32 {
-    let mut h = a.wrapping_mul(0x9E3779B1) ^ b.wrapping_mul(0x85EBCA77);
-    h ^= h >> 15;
-    h = h.wrapping_mul(0x2C1B3C6D);
-    h ^= h >> 12;
-    h
-}
-
-fn pick(set: &str, h: u32) -> char {
-    let n = set.chars().count().max(1);
-    set.chars().nth(h as usize % n).unwrap_or('?')
-}
 
 fn dist(a: P, b: P) -> f32 {
     let (dx, dy) = (b.0 - a.0, (b.1 - a.1) * 2.0); // rows count double, like TTE
@@ -166,22 +154,21 @@ fn dur(a: P, b: P, tick_speed: f32) -> f32 {
     (dist(a, b) / (tick_speed * 60.0)).clamp(0.15, 4.0)
 }
 
-const RAINBOW: [&str; 7] = ["e81416", "ffa500", "faeb36", "79c314", "487de7", "4b369d", "70369d"];
+const RAINBOW: [Rgb; 7] = [
+    Rgb::from_hex(0xe81416),
+    Rgb::from_hex(0xffa500),
+    Rgb::from_hex(0xfaeb36),
+    Rgb::from_hex(0x79c314),
+    Rgb::from_hex(0x487de7),
+    Rgb::from_hex(0x4b369d),
+    Rgb::from_hex(0x70369d),
+];
 
 fn rainbow(t: f32) -> Rgb {
     let n = RAINBOW.len() as f32;
     let x = t.rem_euclid(1.0) * n;
     let i = x as usize % RAINBOW.len();
-    Rgb::hex(RAINBOW[i]).mix(Rgb::hex(RAINBOW[(i + 1) % RAINBOW.len()]), x.fract())
-}
-
-fn grad(stops: &[Rgb], u: f32) -> Rgb {
-    if stops.len() == 1 {
-        return stops[0];
-    }
-    let x = u.clamp(0.0, 1.0) * (stops.len() - 1) as f32;
-    let i = (x as usize).min(stops.len() - 2);
-    stops[i].mix(stops[i + 1], x - i as f32)
+    RAINBOW[i].mix(RAINBOW[(i + 1) % RAINBOW.len()], x.fract())
 }
 
 pub struct Chars<'a> {
@@ -239,7 +226,7 @@ impl Effect {
                             delay: t0 + rng.f() * span,
                             pre: None,
                             stages: vec![
-                                Stage::go(from, h, dur(from, h, rng.range(0.33, 0.57)), Ease::InQuart, Glyph::Fixed(rng.pick_char("o.,*|")), Col::Solid(blue)),
+                                Stage::go(from, h, dur(from, h, rng.range(0.33, 0.57)), Ease::InQuart, Glyph::Fixed(rng.pick(&['o', '.', ',', '*', '|'])), Col::Solid(blue)),
                                 Stage::still(h, 0.35, Glyph::Final, Col::ToFinal(blue)),
                             ],
                             end_hidden: false,
@@ -364,8 +351,8 @@ impl Effect {
                             delay: t0,
                             pre: None,
                             stages: vec![
-                                Stage::go(launch, apex, 0.7, Ease::OutExpo, Glyph::Rand("oO0°"), Col::Solid(col)),
-                                Stage::go(apex, burst, 0.45, Ease::OutCirc, Glyph::Rand("*+·"), Col::Grad(vec![col, WHITE, col])),
+                                Stage::go(launch, apex, 0.7, Ease::OutExpo, Glyph::Rand(&['o', 'O', '0', '°']), Col::Solid(col)),
+                                Stage::go(apex, burst, 0.45, Ease::OutCirc, Glyph::Rand(&['*', '+', '·']), Col::Grad(vec![col, WHITE, col])),
                                 down,
                             ],
                             end_hidden: false,
@@ -386,11 +373,11 @@ impl Effect {
                     let far = (centre.0 + a.cos() * c.w * rng.range(0.15, 0.5), centre.1 + a.sin() * c.h * rng.range(0.15, 0.5));
                     anims.push(Anim {
                         delay: d,
-                        pre: Some((start, Glyph::Rand("*'`¤•°·"), Col::Solid(Rgb::hex("4a4a4d")))),
+                        pre: Some((start, Glyph::Rand(DUST), Col::Solid(Rgb::hex("4a4a4d")))),
                         stages: vec![
-                            Stage::go(start, centre, fall, Ease::InExpo, Glyph::Rand("*'`¤•°·"), Col::Grad(vec![Rgb::hex("4a4a4d"), WHITE])),
+                            Stage::go(start, centre, fall, Ease::InExpo, Glyph::Rand(DUST), Col::Grad(vec![Rgb::hex("4a4a4d"), WHITE])),
                             Stage::still(centre, (collapse - d - fall).max(0.0), Glyph::Seq("◦◎◉●", 2), Col::Solid(WHITE)),
-                            Stage::go(centre, far, 0.7, Ease::OutExpo, Glyph::Rand("*'`¤•°·"), Col::Solid(sc)),
+                            Stage::go(centre, far, 0.7, Ease::OutExpo, Glyph::Rand(DUST), Col::Solid(sc)),
                             Stage::go(far, h, 1.0, Ease::InCubic, Glyph::Final, Col::ToFinal(sc)),
                         ],
                         end_hidden: false,
@@ -452,7 +439,7 @@ impl Effect {
                         delay: (c.rows - 1 - c.row[i]) as f32 * 0.22 + rng.f() * 0.4,
                         pre: None,
                         stages: vec![
-                            Stage::go(from, h, 1.3, Ease::OutBounce, Glyph::Fixed(rng.pick_char("*oO0.")), Col::Solid(g)),
+                            Stage::go(from, h, 1.3, Ease::OutBounce, Glyph::Fixed(rng.pick(&['*', 'o', 'O', '0', '.'])), Col::Solid(g)),
                             Stage::still(h, 0.4, Glyph::Final, Col::ToFinal(g)),
                         ],
                         end_hidden: false,
@@ -548,7 +535,7 @@ impl Effect {
                     vec![
                         Stage::still(h, rng.range(0.0, 2.0), Glyph::Final, Col::Bright(1.0, 0.65)),
                         Stage::still(h, 0.3, Glyph::Final, Col::Bright(0.65, 0.4)),
-                        Stage::go(h, floor, 1.0, Ease::OutBounce, Glyph::Rand("*.,"), Col::Bright(0.4, 0.3)),
+                        Stage::go(h, floor, 1.0, Ease::OutBounce, Glyph::Rand(&['*', '.', ',']), Col::Bright(0.4, 0.3)),
                         Stage::still(floor, 0.6, Glyph::Fixed('.'), Col::Bright(0.3, 0.0)),
                     ]
                 }
@@ -624,7 +611,7 @@ impl Effect {
             match c {
                 Col::Final => fin,
                 Col::Solid(c) => *c,
-                Col::Grad(v) => grad(v, u),
+                Col::Grad(v) => ramp(v, u),
                 Col::ToFinal(c) => c.mix(fin, u),
                 Col::Bright(a, b) => fin.scale(a + (b - a) * u),
                 Col::Rainbow(off) => rainbow(off + t * 0.6),
@@ -664,7 +651,8 @@ impl Effect {
     }
 }
 
-pub const CIPHER: &str = "!#$%&()*+-/<=>?@[]^_{|}~0123456789ABCDEFabcdef▖▗▘▙▚▛▜▝▞▟░▒▓";
+pub const CIPHER: &[char] = &['!', '#', '$', '%', '&', '(', ')', '*', '+', '-', '/', '<', '=', '>', '?', '@', '[', ']', '^', '_', '{', '|', '}', '~', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', 'a', 'b', 'c', 'd', 'e', 'f', '▖', '▗', '▘', '▙', '▚', '▛', '▜', '▝', '▞', '▟', '░', '▒', '▓'];
+const DUST: &[char] = &['*', '\'', '`', '¤', '•', '°', '·'];
 
 fn shuffle<T>(v: &mut [T], rng: &mut Rng) {
     for i in (1..v.len()).rev() {

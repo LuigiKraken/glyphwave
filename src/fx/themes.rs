@@ -41,7 +41,7 @@
 use super::banner::Ch;
 use super::effects::{CIPHER, Kind};
 use super::spectrum::Spectrum;
-use super::{Ctx, KATAKANA, Look, Rng};
+use super::{Ctx, KATAKANA, Look, Rng, hash, pick, ramp, sample};
 use crate::canvas::Canvas;
 use crate::color::{Rgb, WHITE};
 
@@ -75,9 +75,16 @@ pub const ALL: [Theme; 10] = [
     Theme::Warp,
 ];
 
-const FIRE: [&str; 6] = ["1a0000", "510100", "8A003C", "fe650d", "fff75d", "ffffff"];
-const GREENS: [&str; 3] = ["185318", "3cb043", "92be92"];
-const VHS: [&str; 2] = ["ff3cfa", "3cf0ff"];
+const FIRE: [Rgb; 6] = [
+    Rgb::from_hex(0x1a0000),
+    Rgb::from_hex(0x510100),
+    Rgb::from_hex(0x8A003C),
+    Rgb::from_hex(0xfe650d),
+    Rgb::from_hex(0xfff75d),
+    Rgb::from_hex(0xffffff),
+];
+const GREENS: [Rgb; 3] = [Rgb::from_hex(0x185318), Rgb::from_hex(0x3cb043), Rgb::from_hex(0x92be92)];
+const VHS: [Rgb; 2] = [Rgb::from_hex(0xff3cfa), Rgb::from_hex(0x3cf0ff)];
 /// The usual ASCII-fire ramp, cold → hot.
 const FLAME: [char; 10] = ['.', ',', ':', '^', '*', 'x', 's', 'S', '#', '$'];
 /// Beam trail, TTE's beams glyphs.
@@ -111,11 +118,10 @@ impl Theme {
 
     /// The letters' final colour stops; None = the album palette.
     pub fn palette(self) -> Option<Vec<Rgb>> {
-        let g = |s: &[&str]| Some(s.iter().map(|h| Rgb::hex(h)).collect::<Vec<_>>());
         match self {
-            Theme::Fire => g(&FIRE[2..5]),
-            Theme::Matrix => g(&GREENS),
-            Theme::Glitch => g(&VHS),
+            Theme::Fire => Some(FIRE[2..5].to_vec()),
+            Theme::Matrix => Some(GREENS.to_vec()),
+            Theme::Glitch => Some(VHS.to_vec()),
             _ => None,
         }
     }
@@ -210,38 +216,6 @@ pub struct Hold {
     spawn_acc: f32,
 }
 
-fn hex(h: &str) -> Rgb {
-    Rgb::hex(h)
-}
-
-fn ramp(stops: &[&str], u: f32) -> Rgb {
-    let x = u.clamp(0.0, 1.0) * (stops.len() - 1) as f32;
-    let i = (x as usize).min(stops.len() - 2);
-    hex(stops[i]).mix(hex(stops[i + 1]), x - i as f32)
-}
-
-fn hash(a: u32, b: u32) -> u32 {
-    let mut h = a.wrapping_mul(0x9E3779B1) ^ b.wrapping_mul(0x85EBCA77);
-    h ^= h >> 15;
-    h = h.wrapping_mul(0x2C1B3C6D);
-    h ^ (h >> 12)
-}
-
-fn nth(set: &str, h: u32) -> char {
-    let n = set.chars().count().max(1);
-    set.chars().nth(h as usize % n).unwrap_or('?')
-}
-
-/// A 0..1 series sampled at u in 0..1 with linear interpolation.
-fn sample(v: &[f32], u: f32) -> f32 {
-    if v.is_empty() {
-        return 0.0;
-    }
-    let x = u.clamp(0.0, 1.0) * (v.len() - 1) as f32;
-    let i = x as usize;
-    let k = (i + 1).min(v.len() - 1);
-    v[i] + (v[k] - v[i]) * (x - i as f32)
-}
 
 impl Hold {
     pub fn new(theme: Theme) -> Hold {
@@ -666,8 +640,8 @@ impl Hold {
                     continue;
                 }
                 let fade = 1.0 - k as f32 / d.len as f32;
-                let ch = nth(KATAKANA, hash(d.seed ^ y as u32, if k == 0 { frame } else { frame / 6 }));
-                let col = if k == 0 { hex("dbffdb") } else { ramp(&GREENS, fade) .scale(0.35 + 0.65 * fade) };
+                let ch = pick(KATAKANA, hash(d.seed ^ y as u32, if k == 0 { frame } else { frame / 6 }));
+                let col = if k == 0 { Rgb::from_hex(0xdbffdb) } else { ramp(&GREENS, fade) .scale(0.35 + 0.65 * fade) };
                 cv.put(d.x, y, ch, col.scale(layer));
                 let i = y as usize * w + d.x as usize;
                 self.wet[i] = self.wet[i].max(if k == 0 { 1.0 } else { fade * 0.8 });
@@ -705,7 +679,7 @@ impl Hold {
         let p = if self.scramble > 0.0 { 1.0 } else { (0.01 + 0.4 * f.hat_env + 0.15 * (f.treb_att - 1.0).max(0.0)).min(0.6) } * react;
         let split = if self.homing { 0 } else { (f.kick_env * 2.4 * react).round() as i32 };
         let frame = (self.t * 15.0) as u32;
-        let (mag, cyan) = (hex(VHS[0]), hex(VHS[1]));
+        let [mag, cyan] = VHS;
         if split > 0 {
             for c in chars {
                 let (x, y) = (c.home.0 as i32 + shift[c.dy], c.home.1 as i32);
@@ -716,7 +690,7 @@ impl Hold {
         for (i, c) in chars.iter().enumerate() {
             let h = hash(i as u32, frame);
             let scrambled = (h % 1000) as f32 / 1000.0 < p;
-            let ch = if scrambled { nth(CIPHER, h >> 10) } else { c.ch };
+            let ch = if scrambled { pick(CIPHER, h >> 10) } else { c.ch };
             let col = if scrambled {
                 if h & 1 == 0 { mag } else { cyan }
             } else if shift[c.dy] != 0 {

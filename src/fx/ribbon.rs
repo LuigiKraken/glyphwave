@@ -20,7 +20,7 @@
 //! Between holds it lifts a little, to carry the transition. Spikes run into
 //! the headroom under the banner on a soft limit, so they never flat-top.
 
-use super::{BLOCKS, Ctx, Rng};
+use super::{BLOCKS, Ctx, Rng, sample};
 use crate::canvas::Canvas;
 use crate::color::{Rgb, WHITE};
 
@@ -40,16 +40,6 @@ pub struct Ribbon {
     rng: Rng,
 }
 
-/// A 0..1 series sampled at u in 0..1 with linear interpolation.
-fn sample(v: &[f32], u: f32) -> f32 {
-    if v.is_empty() {
-        return 0.0;
-    }
-    let x = u.clamp(0.0, 1.0) * (v.len() - 1) as f32;
-    let i = x as usize;
-    let k = (i + 1).min(v.len() - 1);
-    v[i] + (v[k] - v[i]) * (x - i as f32)
-}
 
 impl Ribbon {
     pub fn new() -> Ribbon {
