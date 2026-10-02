@@ -116,7 +116,7 @@ impl Theme {
         }
     }
 
-    /// The letters' final colour stops; None = the album palette.
+    /// The letters' final colour stops; None = one built round a random hue.
     pub fn palette(self) -> Option<Vec<Rgb>> {
         match self {
             Theme::Fire => Some(FIRE[2..5].to_vec()),

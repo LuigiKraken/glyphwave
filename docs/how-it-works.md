@@ -66,9 +66,11 @@ hooks in, and the research it builds on.
     instead of flat-topping. It lifts a little between holds to carry the
     transition, and it gives way to the `floor` theme's own bars.
   - **Colours** are shared: the banner, the theme's accents and the ribbon
-    all read one palette, so they always match. Each cycle gets a neon
-    palette (more likely the busier the music) or the album's, saturated;
-    `fire`, `matrix` and `glitch` keep their own. While a theme holds, the
+    all read one palette, so they always match. Each cycle gets a palette
+    built round a random hue anywhere on the colour wheel, well away from
+    the last cycle's: close, softer hues when the music is calm, wider
+    schemes (split complementary, triad, square) at full strength the busier
+    it gets; `fire`, `matrix` and `glitch` keep their own. While a theme holds, the
     palette steps on every beat: a little when it's calm, big jumps (and a
     bigger one on the downbeat) when it's busy.
   - **Switching** follows the music rather than a clock. A lull (a
@@ -84,8 +86,8 @@ hooks in, and the research it builds on.
     marks a hold as due.
 
   Everything is drawn in plain character cells: no half-block backdrops, no
-  stacked layers. Themes without a fixed palette take a neon set or the
-  base purple → cyan → white, saturated. Calm music draws calm themes and loud music busy ones. While a
+  stacked layers. Themes without a fixed palette take one built round a
+  random hue; idle keeps the base purple → cyan → white. Calm music draws calm themes and loud music busy ones. While a
   track plays, the top-left corner shows its title, artist · album, and
   progress with the length. When playback pauses or stops, the corner stays
   empty.
