@@ -39,7 +39,7 @@ impl Rain {
                     y: -(rng.below(6) as f32),
                     speed: rng.range(6.0, 22.0),
                     len,
-                    glyphs: (0..len).map(|_| rng.pick_char(KATAKANA)).collect(),
+                    glyphs: (0..len).map(|_| rng.pick(KATAKANA)).collect(),
                     flash: 0.0,
                 });
             }
@@ -51,7 +51,7 @@ impl Rain {
             }
             if rng.chance(0.05) {
                 let i = rng.below(d.glyphs.len());
-                d.glyphs[i] = rng.pick_char(KATAKANA);
+                d.glyphs[i] = rng.pick(KATAKANA);
             }
             let head = d.y as i32;
             let body = cx.palette[0].mix(cx.palette[1], 0.4);

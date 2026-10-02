@@ -11,6 +11,7 @@
 //! "… is calling you", "… invited you to a huddle"). It rings until the app
 //! closes or replaces the notification, or for `RING` at most.
 
+use crate::mpris::md_str as hint;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -145,9 +146,6 @@ pub fn detect(app: &str, entry: &str, category: &str, summary: &str, body: &str)
 
 type Hints = HashMap<String, OwnedValue>;
 
-fn hint(h: &Hints, k: &str) -> String {
-    h.get(k).and_then(|v| String::try_from(v.try_clone().ok()?).ok()).unwrap_or_default()
-}
 
 /// The ring, and a counter bumped on every change so main only has to
 /// look at an atomic each frame.

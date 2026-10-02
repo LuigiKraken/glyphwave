@@ -8,6 +8,11 @@ pub const BLACK: Rgb = Rgb(0, 0, 0);
 pub const WHITE: Rgb = Rgb(255, 255, 255);
 
 impl Rgb {
+    /// 0xRRGGBB, for constant palettes.
+    pub const fn from_hex(v: u32) -> Rgb {
+        Rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
+    }
+
     pub fn hex(s: &str) -> Rgb {
         let v = u32::from_str_radix(s.trim_start_matches('#'), 16).unwrap_or(0xffffff);
         Rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)

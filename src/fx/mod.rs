@@ -167,57 +167,36 @@ impl Rng {
     pub fn pick<T: Copy>(&mut self, s: &[T]) -> T {
         s[self.below(s.len())]
     }
-
-    pub fn pick_char(&mut self, s: &str) -> char {
-        let n = s.chars().count();
-        s.chars().nth(self.below(n)).unwrap_or(' ')
-    }
 }
 
-/// Easing curves (terminaltexteffects' set; not all used yet).
-#[allow(dead_code)]
+/// Easing curves (from terminaltexteffects' set, the ones in use).
 #[derive(Clone, Copy, Debug)]
 pub enum Ease {
     Linear,
     InQuad,
-    OutQuad,
     InOutQuad,
     InCubic,
-    OutCubic,
-    InOutCubic,
     InQuart,
     InOutQuart,
-    OutQuint,
     InExpo,
     OutExpo,
     OutCirc,
-    InOutCirc,
-    OutBack,
     OutBounce,
-    InOutSine,
-    OutSine,
 }
 
 pub fn ease(e: Ease, t: f32) -> f32 {
-    use std::f32::consts::PI;
     let t = t.clamp(0.0, 1.0);
     match e {
         Ease::Linear => t,
         Ease::InQuad => t * t,
-        Ease::OutQuad => 1.0 - (1.0 - t) * (1.0 - t),
         Ease::InOutQuad => {
             if t < 0.5 { 2.0 * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(2) / 2.0 }
         }
         Ease::InCubic => t * t * t,
-        Ease::OutCubic => 1.0 - (1.0 - t).powi(3),
-        Ease::InOutCubic => {
-            if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 }
-        }
         Ease::InQuart => t.powi(4),
         Ease::InOutQuart => {
             if t < 0.5 { 8.0 * t.powi(4) } else { 1.0 - (-2.0 * t + 2.0).powi(4) / 2.0 }
         }
-        Ease::OutQuint => 1.0 - (1.0 - t).powi(5),
         Ease::InExpo => {
             if t == 0.0 { 0.0 } else { 2f32.powf(10.0 * t - 10.0) }
         }
@@ -225,17 +204,6 @@ pub fn ease(e: Ease, t: f32) -> f32 {
             if t == 1.0 { 1.0 } else { 1.0 - 2f32.powf(-10.0 * t) }
         }
         Ease::OutCirc => (1.0 - (t - 1.0).powi(2)).sqrt(),
-        Ease::InOutCirc => {
-            if t < 0.5 {
-                (1.0 - (1.0 - (2.0 * t).powi(2)).sqrt()) / 2.0
-            } else {
-                ((1.0 - (-2.0 * t + 2.0).powi(2)).sqrt() + 1.0) / 2.0
-            }
-        }
-        Ease::OutBack => {
-            let (c1, c3) = (1.70158, 2.70158);
-            1.0 + c3 * (t - 1.0).powi(3) + c1 * (t - 1.0).powi(2)
-        }
         Ease::OutBounce => {
             let (n1, d1) = (7.5625, 2.75);
             if t < 1.0 / d1 {
@@ -251,8 +219,6 @@ pub fn ease(e: Ease, t: f32) -> f32 {
                 n1 * t * t + 0.984375
             }
         }
-        Ease::InOutSine => -((PI * t).cos() - 1.0) / 2.0,
-        Ease::OutSine => (t * PI / 2.0).sin(),
     }
 }
 
@@ -265,5 +231,39 @@ pub fn bez(p0: (f32, f32), c: (f32, f32), p1: (f32, f32), t: f32) -> (f32, f32) 
     )
 }
 
-pub const KATAKANA: &str = "ｦｱｳｴｵｶｷｹｺｻｼｽｾｿﾀﾂﾃﾅﾆﾇﾈﾊﾋﾎﾏﾐﾑﾒﾓﾔﾕﾗﾘﾜ";
+pub const KATAKANA: &[char] = &['ｦ', 'ｱ', 'ｳ', 'ｴ', 'ｵ', 'ｶ', 'ｷ', 'ｹ', 'ｺ', 'ｻ', 'ｼ', 'ｽ', 'ｾ', 'ｿ', 'ﾀ', 'ﾂ', 'ﾃ', 'ﾅ', 'ﾆ', 'ﾇ', 'ﾈ', 'ﾊ', 'ﾋ', 'ﾎ', 'ﾏ', 'ﾐ', 'ﾑ', 'ﾒ', 'ﾓ', 'ﾔ', 'ﾕ', 'ﾗ', 'ﾘ', 'ﾜ'];
+
+/// A stateless hash, for glyphs and jitter that must be the same each frame.
+pub fn hash(a: u32, b: u32) -> u32 {
+    let mut h = a.wrapping_mul(0x9E3779B1) ^ b.wrapping_mul(0x85EBCA77);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2C1B3C6D);
+    h ^ (h >> 12)
+}
+
+/// The member of `set` that `h` picks.
+pub fn pick(set: &[char], h: u32) -> char {
+    set.get(h as usize % set.len().max(1)).copied().unwrap_or('?')
+}
+
+/// A 0..1 series sampled at u in 0..1 with linear interpolation.
+pub fn sample(v: &[f32], u: f32) -> f32 {
+    if v.is_empty() {
+        return 0.0;
+    }
+    let x = u.clamp(0.0, 1.0) * (v.len() - 1) as f32;
+    let i = x as usize;
+    let k = (i + 1).min(v.len() - 1);
+    v[i] + (v[k] - v[i]) * (x - i as f32)
+}
+
+/// Colour at u in 0..1 along evenly spaced stops.
+pub fn ramp(stops: &[Rgb], u: f32) -> Rgb {
+    if stops.len() == 1 {
+        return stops[0];
+    }
+    let x = u.clamp(0.0, 1.0) * (stops.len() - 1) as f32;
+    let i = (x as usize).min(stops.len() - 2);
+    stops[i].mix(stops[i + 1], x - i as f32)
+}
 pub const BLOCKS: [char; 9] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];

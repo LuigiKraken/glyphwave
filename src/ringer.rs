@@ -6,6 +6,7 @@
 //! the music again and fades it back in, like a phone. Spotify's MPRIS Volume would do for the fade, Chromium's has
 //! none, so the stream it is. Nothing runs while no call rings.
 
+use crate::audio;
 use std::io::Write;
 use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
@@ -30,7 +31,7 @@ struct Stream {
 }
 
 fn list(key: &str) -> Vec<Stream> {
-    let Ok(out) = Command::new("pactl").args(["list", "sink-inputs"]).env("LC_ALL", "C").stderr(Stdio::null()).output() else {
+    let Ok(out) = audio::pactl(&["list", "sink-inputs"]).output() else {
         return Vec::new();
     };
     let text = String::from_utf8_lossy(&out.stdout);
@@ -79,7 +80,7 @@ pub fn sink_of(player: &str) -> Option<String> {
 
 fn set_volume(id: &str, vol: &[u32], k: f32) {
     let vols = vol.iter().map(|&v| ((v as f32 * k) as u32).to_string());
-    let _ = Command::new("pactl").arg("set-sink-input-volume").arg(id).args(vols).stderr(Stdio::null()).status();
+    let _ = audio::pactl(&["set-sink-input-volume", id]).args(vols).status();
 }
 
 /// Fade `player`'s stream to silence, `pause` it, then put the volume back.
@@ -122,11 +123,11 @@ fn app(player: &str) -> String {
     player.trim_start_matches("org.mpris.MediaPlayer2.").split('.').next().unwrap_or("").to_lowercase()
 }
 
-/// Step the streams' volume through `level(0..1]` over `len`.
 /// Set while a fade runs: its volume steps are stream events the sink
 /// watcher can skip.
 pub static FADING: AtomicBool = AtomicBool::new(false);
 
+/// Step the streams' volume through `level(0..1]` over `len`.
 fn ramp(found: &[(String, Vec<u32>)], len: Duration, level: impl Fn(f32) -> f32) {
     FADING.store(true, Ordering::Relaxed);
     let start = Instant::now();

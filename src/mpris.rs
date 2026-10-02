@@ -51,7 +51,7 @@ pub struct Watcher {
     conn: Option<Connection>,
 }
 
-fn md_str(md: &HashMap<String, OwnedValue>, k: &str) -> String {
+pub fn md_str(md: &HashMap<String, OwnedValue>, k: &str) -> String {
     md.get(k).and_then(|v| String::try_from(v.try_clone().ok()?).ok()).unwrap_or_default()
 }
 

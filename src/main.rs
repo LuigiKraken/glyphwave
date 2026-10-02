@@ -448,7 +448,7 @@ fn main() {
                 None => main_resized.then(term::size),
             };
             if let Some((nw, nh)) = size {
-                if (nw, nh) != (v.w, v.h) || frames == 0 {
+                if (nw, nh) != (v.w, v.h) {
                     (v.w, v.h) = (nw, nh);
                     v.cv = Canvas::new(nw, nh, o.truecolor, o.console);
                 }
@@ -477,8 +477,7 @@ fn main() {
         let listen = was_ringing && !o.demo;
         if !o.demo {
             if (playing && !idle_forced) || listen {
-                let name = sink.name().clone();
-                cap.start(&name);
+                cap.start(&sink.name());
             } else if (not_playing > 10.0 || idle_forced) && cap.running() {
                 cap.stop();
             }
@@ -648,6 +647,9 @@ fn main() {
 
             let out = cv.flush();
             bytes += out.len() as u64;
+            if out.is_empty() {
+                continue;
+            }
             match &v.term {
                 Some(tm) => tm.write(out.as_bytes()),
                 None => term::write_all(out.as_bytes()),
@@ -658,7 +660,7 @@ fn main() {
             let size = term::size_of(tm.fd);
             if size != *at {
                 *at = size;
-                tm.write(if o.truecolor { b"\x1b[48;2;0;0;0m\x1b[2J" } else { b"\x1b[48;5;16m\x1b[2J" });
+                tm.write(canvas::erase(o.truecolor).as_bytes());
             }
         }
         if o.trace && views[0].dir.name != traced {

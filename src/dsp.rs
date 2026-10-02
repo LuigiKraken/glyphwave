@@ -25,9 +25,6 @@ const ODF_N: usize = 2048;
 const HOP_RATE: f32 = RATE as f32 / HOP as f32;
 const TEMPO_LEN: usize = 800; // 8 s of ODF
 pub const WAVE: usize = 2048;
-/// dB/octave lift around 1 kHz. Band-summed power already shows pink noise
-/// flat; 0 keeps dense guitar/cymbal mixes from standing taller than the bass.
-const TILT: f32 = 0.0;
 /// Visible dynamic range below the auto-gain reference, and the contrast curve.
 const RANGE_DB: f32 = 36.0;
 const GAMMA: f32 = 2.2;
@@ -151,12 +148,9 @@ pub struct Features {
     /// Log spectral centroid 0 (100 Hz) .. 1 (8 kHz), smoothed.
     pub centroid: f32,
     pub flatness: f32,
-    /// MilkDrop-style band energy relative to its 8 s average (1 = normal).
-    pub bass: f32,
-    pub mid: f32,
-    pub treb: f32,
+    /// MilkDrop-style bass and treble energy relative to their 8 s
+    /// average (1 = normal), smoothed over ~1 s.
     pub bass_att: f32,
-    pub mid_att: f32,
     pub treb_att: f32,
     /// Onset strength this frame (0 = none) and decaying envelopes.
     pub kick: f32,
@@ -404,6 +398,12 @@ impl Analyzer {
         f.beat = false;
         f.drop = false;
         f.section = false;
+        // nothing new and silent for a while: the bars, caps and envelopes
+        // have settled, so skip the FFTs (idle runs for hours)
+        if ring.total == self.last_total && !self.gate_open && f.silent_for > 10.0 {
+            f.silent_for += dt;
+            return;
+        }
 
         // how many new 10 ms hops arrived; copy enough history for all of them
         let new = ring.total.saturating_sub(self.last_total);
@@ -467,7 +467,7 @@ impl Analyzer {
             for (i, b) in self.bands.iter().enumerate() {
                 let p = self.band_power(b);
                 powers[i] += 0.5 * p;
-                let l = 10.0 * (p + 1e-12).log10() + TILT * (b.fc / 1000.0).log2();
+                let l = 10.0 * (p + 1e-12).log10();
                 self.levels[ch][i] = l;
                 max_l = max_l.max(l);
             }
@@ -485,11 +485,10 @@ impl Analyzer {
             ema(&mut self.lref, max_l, dt, tau);
             self.lref = self.lref.clamp(-70.0, 12.0);
         }
-        let range = RANGE_DB;
-        let floor = self.lref - range;
+        let floor = self.lref - RANGE_DB;
         for ch in 0..2 {
             for i in 0..self.nbars {
-                let h = ((levels[ch][i] - floor) / range).clamp(0.0, 1.0).powf(GAMMA);
+                let h = ((levels[ch][i] - floor) / RANGE_DB).clamp(0.0, 1.0).powf(GAMMA);
                 let h = if self.gate_open { h } else { 0.0 };
                 let out = if ch == 0 { &mut self.f.left } else { &mut self.f.right };
                 let y = &mut out[i];
@@ -521,7 +520,7 @@ impl Analyzer {
                 self.cap_vel[i] += 6.0 * dt;
                 f.caps[i] = (f.caps[i] - self.cap_vel[i] * dt).max(m);
             }
-            self.raw_h[i] = ((0.5 * (levels[0][i] + levels[1][i]) - floor) / range).clamp(0.0, 1.0);
+            self.raw_h[i] = ((0.5 * (levels[0][i] + levels[1][i]) - floor) / RANGE_DB).clamp(0.0, 1.0);
         }
 
         self.spectral_features(&powers, dt);
@@ -576,12 +575,8 @@ impl Analyzer {
             }
         }
         let rel = |g: usize| (self.e_bands[g] / self.e_long[g].max(1e-9)).clamp(0.0, 4.0);
-        f.bass = rel(0);
-        f.mid = rel(1);
-        f.treb = rel(2);
-        ema(&mut f.bass_att, f.bass, dt, 1.0);
-        ema(&mut f.mid_att, f.mid, dt, 1.0);
-        ema(&mut f.treb_att, f.treb, dt, 1.0);
+        ema(&mut f.bass_att, rel(0), dt, 1.0);
+        ema(&mut f.treb_att, rel(2), dt, 1.0);
 
         // build-up / drop: a stretch of missing bass, then bass back with a kick
         if self.gate_open {

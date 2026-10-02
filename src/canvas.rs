@@ -30,6 +30,8 @@ pub struct Canvas {
     /// Sub-cell braille dots, 2×4 per cell; bit layout per Unicode braille.
     dots: Vec<u8>,
     dot_col: Vec<Rgb>,
+    /// Whether any dot was set since the last `resolve_dots`.
+    any_dots: bool,
     /// Cells holding a lit layer (the ribbon): a glyph drawn over one brightens
     /// it instead of replacing it.
     lit: Vec<bool>,
@@ -79,6 +81,12 @@ fn console_glyph(ch: char) -> char {
     }
 }
 
+/// Erase the screen to explicit black: the terminal's default background
+/// may be grey.
+pub fn erase(truecolor: bool) -> &'static str {
+    if truecolor { "\x1b[48;2;0;0;0m\x1b[2J" } else { "\x1b[48;5;16m\x1b[2J" }
+}
+
 impl Canvas {
     pub fn new(w: usize, h: usize, truecolor: bool, console: bool) -> Canvas {
         Canvas {
@@ -92,14 +100,13 @@ impl Canvas {
             out: String::with_capacity(1 << 16),
             dots: vec![0; w * h],
             dot_col: vec![BLACK; w * h],
+            any_dots: false,
             lit: vec![false; w * h],
         }
     }
 
     pub fn clear(&mut self) {
         self.cells.fill(BLANK);
-        self.dots.fill(0);
-        self.dot_col.fill(BLACK);
         self.lit.fill(false);
     }
 
@@ -180,10 +187,7 @@ impl Canvas {
     pub fn text(&mut self, x: i32, y: i32, s: &str, fg: Rgb) -> i32 {
         let mut cx = x;
         for ch in s.chars() {
-            if let Some(i) = self.idx(cx, y) {
-                self.lit[i] = false;
-            }
-            self.put(cx, y, ch, fg);
+            self.put_top(cx, y, ch, fg);
             cx += 1;
         }
         cx
@@ -198,6 +202,7 @@ impl Canvas {
         }
         let (x, y) = (dx / 2, dy / 4);
         if let Some(i) = self.idx(x, y) {
+            self.any_dots = true;
             self.dots[i] |= BRAILLE_BITS[(dx % 2) as usize][(dy % 4) as usize];
             self.dot_col[i] = self.dot_col[i].max(c);
         }
@@ -227,6 +232,9 @@ impl Canvas {
 
     /// Move accumulated braille dots into the cells: only where no glyph sits.
     pub fn resolve_dots(&mut self) {
+        if !std::mem::take(&mut self.any_dots) {
+            return;
+        }
         for i in 0..self.cells.len() {
             let d = self.dots[i];
             if d != 0 && empty(self.cells[i].ch) {
@@ -249,8 +257,8 @@ impl Canvas {
         out.clear();
         out.push_str("\x1b[?2026h");
         if self.full {
-            // erase to explicit black: the terminal's default background may be grey
-            out.push_str(if self.truecolor { "\x1b[0m\x1b[48;2;0;0;0m\x1b[2J" } else { "\x1b[0m\x1b[48;5;16m\x1b[2J" });
+            out.push_str("\x1b[0m");
+            out.push_str(erase(self.truecolor));
         }
         let mut cur_fg: Option<Rgb> = None;
         let mut cursor: Option<(usize, usize)> = None;
@@ -258,7 +266,7 @@ impl Canvas {
             for x in 0..self.w {
                 let i = y * self.w + x;
                 let mut c = self.cells[i];
-                if !self.truecolor {
+                if !self.truecolor && c.ch != ' ' {
                     // diff what the terminal will show, so drift inside one
                     // palette entry sends nothing
                     c.fg = c.fg.snap256();
@@ -286,6 +294,11 @@ impl Canvas {
                 cursor = Some((x + 1, y));
                 self.front[i] = c;
             }
+        }
+        // nothing changed: nothing to send, and the terminal sleeps
+        if cursor.is_none() && !self.full {
+            out.clear();
+            return out;
         }
         self.full = false;
         out.push_str("\x1b[?2026l");

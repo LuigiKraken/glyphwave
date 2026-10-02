@@ -128,10 +128,13 @@ impl Capture {
 
     /// Record `sink` (see `command`); one recording another sink is stopped.
     pub fn start(&mut self, sink: &str) {
-        if self.running() && self.sink != sink {
+        if self.running() {
+            if self.sink == sink {
+                return;
+            }
             self.stop();
         }
-        if self.missing || self.running() {
+        if self.missing {
             return;
         }
         // called every frame while playing, so a death is seen at once
@@ -219,7 +222,7 @@ pub fn die_with_us(c: &mut Command) -> &mut Command {
 }
 
 /// `pactl` with untranslated output.
-fn pactl(args: &[&str]) -> Command {
+pub fn pactl(args: &[&str]) -> Command {
     let mut c = Command::new("pactl");
     c.args(args).env("LC_ALL", "C").stdin(Stdio::null()).stderr(Stdio::null());
     c
@@ -234,13 +237,7 @@ fn hushed(mute: &str, volume: &str) -> bool {
 }
 
 fn read_hushed(sink: &str) -> bool {
-    let out = |a: &str| {
-        pactl(&[a, sink])
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-            .unwrap_or_default()
-    };
-    hushed(&out("get-sink-mute"), &out("get-sink-volume"))
+    hushed(&pactl_out(&["get-sink-mute", sink]), &pactl_out(&["get-sink-volume", sink]))
 }
 
 fn pactl_out(args: &[&str]) -> String {
