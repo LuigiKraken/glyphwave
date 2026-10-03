@@ -122,6 +122,8 @@ put in `~/.config/glyphwave/banner.txt`. The GIF above uses a banner file.
   never sees Firefox play. It only tells your own desktop session what's
   playing, nothing goes over the network.
 - Optionally fastfetch or neofetch, for the logo banner.
+- A font with half-width katakana, for the `matrix` rain; without one it
+  draws boxes. Most desktops have one; on Arch install `noto-fonts-cjk`.
 
 ## Cost
 

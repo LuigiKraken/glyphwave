@@ -274,24 +274,26 @@ impl Config {
             "# glyphwave — edit, then run `glyphwave setup` again to apply.\n\
              # Times are minutes. then_after and lock_after count from the screensaver's start.\n\n",
         );
+        // a line with its comment, the comments lined up in one column
+        let note = |line: String, why: &str| format!("{line:<27} # {why}\n");
         s += &format!("start_after = {}\n", self.ac.start);
-        s += &format!("then = {}                # lock, screen-off, sleep or none\n", self.ac.then.name());
+        s += &note(format!("then = {}", self.ac.then.name()), "lock, screen-off, sleep or none");
         s += &format!("then_after = {}\n", self.ac.after);
         let lock = self.lock_after.map_or("none".to_string(), |m| m.to_string());
-        s += &format!("lock_after = {lock}          # after this many minutes, waking it lands on the lock screen; 0 always, none never\n");
-        s += &format!("on_battery = {}            # no: only when plugged in\n", if self.on_battery { "yes" } else { "no" });
-        s += &format!("dim = {}                   # dim the screen while it runs: yes, no or battery (KDE)\n", self.dim.name());
-        s += &format!("screens = {}               # with more than one screen: all, or main (the others black)\n", self.screens.name());
+        s += &note(format!("lock_after = {lock}"), "after this many minutes, waking it lands on the lock screen; 0 always, none never");
+        s += &note(format!("on_battery = {}", if self.on_battery { "yes" } else { "no" }), "no: only when plugged in");
+        s += &note(format!("dim = {}", self.dim.name()), "dim the screen while it runs: yes, no or battery (KDE)");
+        s += &note(format!("screens = {}", self.screens.name()), "with more than one screen: all, or main (the others black)");
         match &self.banner {
             Some(b) => s += &format!("banner = {b}\n"),
-            None => s += "# banner = logo         # logo, name, text:<your words>, or a path to a text file\n",
+            None => s += &note("# banner = logo".into(), "logo, name, text:<your words>, or a path to a text file"),
         }
         s += &format!("fps = {}\n", self.fps.unwrap_or(30.0));
         match &self.ringtone {
             Some(r) => s += &format!("ringtone = {r}\n"),
-            None => s += "# ringtone = default     # while a call rings: default, none, or a wav/ogg/flac file\n",
+            None => s += &note("# ringtone = default".into(), "while a call rings: default, none, or a wav/ogg/flac file"),
         }
-        s += &format!("shortcut = {}      # starts it now; none for no key\n", self.shortcut.as_deref().unwrap_or("none"));
+        s += &note(format!("shortcut = {}", self.shortcut.as_deref().unwrap_or("none")), "starts it now; none for no key");
 
         let opt = |on: bool| if on { "" } else { "# " };
         s += "\n# Battery times, when they should differ from the ones above. KDE and GNOME\n\
@@ -421,6 +423,14 @@ mod tests {
         assert_eq!(parse(&d.render()).0, d);
         let d = Config { lock_after: Some(15), ..d };
         assert_eq!(parse(&d.render()).0, d);
+    }
+
+    #[test]
+    fn render_lines_up_comments() {
+        for c in [Config::default(), Config { lock_after: Some(15), dim: Dim::Yes, shortcut: None, ..Config::default() }] {
+            let cols: Vec<usize> = c.render().lines().filter_map(|l| l.get(1..)?.find(" # ")).collect();
+            assert!(cols.len() >= 7 && cols.iter().all(|&i| i == cols[0]), "{cols:?}");
+        }
     }
 
     #[test]
