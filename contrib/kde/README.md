@@ -14,7 +14,7 @@ RunScriptIdleTimeoutSec=300
 
 and the same under `[Battery][RunScript]` for battery too. PowerDevil splits
 the command like a shell would (quotes work, no pipes). Reload it without
-logging out:
+logging out (`qdbus6` is `qdbus-qt6` on Fedora):
 
 ```sh
 qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement reparseConfiguration
@@ -41,7 +41,8 @@ A key missing from the file means Plasma's default, and those fire early:
 screen off after 10 min (5 on battery), sleep after 15 (10 on battery), lock
 after 5. Anything at or before the screensaver's start hides or ends it;
 setup warns about each one. After
-editing the lock timer by hand, `qdbus6 org.freedesktop.ScreenSaver /ScreenSaver configure`.
+editing the lock timer by hand, `qdbus6 org.freedesktop.ScreenSaver /ScreenSaver configure`
+(`qdbus-qt6` on Fedora).
 
 `glyphwave launch` opens Konsole with no scrollbar and a 1 px margin
 (`-p ScrollBarPosition=2 -p TerminalMargin=1`; margin 0 leaves a dark line
