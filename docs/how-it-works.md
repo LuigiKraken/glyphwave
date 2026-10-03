@@ -214,6 +214,12 @@ and delete `~/.local/bin/glyphwave`.
 `then`, `then_after`, `lock_after`, `on_battery`, `dim`, `screens`, `banner`, `fps`) and optional sections
 below, commented out: shorter times on battery, which terminal to open (and a
 Konsole profile of your own, which then keeps its colours), and the locker for Hyprland, sway and X11.
+A locker that can't run would close the screensaver onto an unlocked
+desktop, so on X11, while the config keeps the default `i3lock`, setup takes
+the first installed of i3lock, `cinnamon-screensaver-command --lock`,
+`xflock4` and `light-locker-command -l`, and on every one of these desktops
+it warns when the locker isn't installed, or for hyprlock when
+`~/.config/hypr/hyprlock.conf` is missing (hyprlock quits without one).
 
 **Locking when you come back.** `lock_after` is a grace period, in minutes
 from the screensaver's start. A key or the mouse within it closes the
@@ -316,7 +322,7 @@ See [contrib/gnome](../contrib/gnome/README.md) for Fedora.
 |---|---|
 | `audio.rs` | `parec` (or `pw-record`) from the player's output's monitor (else the default's), float32 stereo at 48 kHz, into a ring buffer; that output's mute and volume; plus the synthetic demo track |
 | `dsp.rs` | spectrum, onsets, tempo, beat phase, loudness, drop and section detection |
-| `mpris.rs` | now playing (zbus), plus the KDE/GNOME locker check in screensaver mode; re-read only on bus signals |
+| `mpris.rs` | now playing (zbus), plus the KDE/GNOME/Cinnamon locker check (in screensaver mode, and before `launch` opens it); re-read only on bus signals |
 | `canvas.rs` | cell buffer with half-block pixels and braille dots; the diffed output |
 | `calls.rs` | incoming calls, read passively from the desktop's notifications |
 | `art.rs` | the banner sources: fetch-tool logo, built-in block font, own file |

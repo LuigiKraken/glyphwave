@@ -10,8 +10,8 @@ use std::process::Command;
 pub const TERMINALS: [&str; 9] =
     ["kitty", "foot", "alacritty", "ghostty", "wezterm", "konsole", "ptyxis", "gnome-terminal", "xterm"];
 
-/// Wayland/X lockers that aren't on the bus; KDE's and GNOME's glyphwave
-/// watches itself.
+/// Wayland/X lockers that aren't on the bus; KDE's, GNOME's and Cinnamon's
+/// are asked on the bus.
 const LOCKERS: [&str; 6] = ["hyprlock", "swaylock", "waylock", "gtklock", "i3lock", "xsecurelock"];
 
 /// Plugged in, unless some supply reports `online` and none of them is.
@@ -148,7 +148,7 @@ pub fn launch(args: &[String]) -> i32 {
     if (bat && !cfg.on_battery) || (bat && has("--on-ac")) || (!bat && has("--on-battery")) {
         return 0;
     }
-    if locked() || !find("--screensaver").is_empty() {
+    if locked() || !find("--screensaver").is_empty() || crate::mpris::bus_locked() {
         return 0;
     }
     let bin = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or("glyphwave".into());

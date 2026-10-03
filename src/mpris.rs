@@ -134,12 +134,14 @@ fn poll(conn: &Connection, track: &Mutex<Track>, last: &mut Option<String>) {
     t.at = Some(Instant::now());
 }
 
-/// The lockers that answer GetActive: KDE's, then GNOME's. Wayland lockers
-/// like hyprlock and swaylock aren't on the bus; their launcher recipes stop
-/// glyphwave before locking instead.
-const LOCKERS: [(&str, &str); 2] = [
+/// The lockers that answer GetActive: KDE's, GNOME's, then Cinnamon's (its
+/// org.freedesktop one says "not implemented"). Wayland lockers like hyprlock
+/// and swaylock aren't on the bus; their launcher recipes stop glyphwave
+/// before locking instead.
+const LOCKERS: [(&str, &str); 3] = [
     ("org.freedesktop.ScreenSaver", "/ScreenSaver"),
     ("org.gnome.ScreenSaver", "/org/gnome/ScreenSaver"),
+    ("org.cinnamon.ScreenSaver", "/org/cinnamon/ScreenSaver"),
 ];
 
 fn locker_active(conn: &Connection) -> bool {
@@ -149,6 +151,11 @@ fn locker_active(conn: &Connection) -> bool {
             .and_then(|m| m.body().deserialize::<bool>().ok())
             .unwrap_or(false)
     })
+}
+
+/// Whether a bus locker is up right now, for the launcher.
+pub fn bus_locked() -> bool {
+    Connection::session().is_ok_and(|c| locker_active(&c))
 }
 
 /// Ask the bus for the signals that mean "re-read": a player's properties or

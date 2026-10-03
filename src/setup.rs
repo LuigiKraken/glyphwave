@@ -700,6 +700,33 @@ fn plan_gnome(p: &mut Plan, m: &Manifest, cfg: &Config, bin: &Path) {
     }
 }
 
+/// X11 lockers, the default first: when it isn't installed, setup takes the
+/// first one that is (Cinnamon's, Xfce's).
+const X11_LOCKERS: [&str; 4] = ["i3lock -c 000000", "cinnamon-screensaver-command --lock", "xflock4", "light-locker-command -l"];
+
+/// A locker that can't run closes glyphwave onto an unlocked desktop, so
+/// pick one that's installed, or say so.
+fn check_locker(mut cfg: Config, d: Desktop, p: &mut Plan) -> Config {
+    let has = |l: &str| launch::installed(l.split_whitespace().next().unwrap_or(l));
+    if d == Desktop::X11 && cfg.x11_locker == X11_LOCKERS[0] {
+        if let Some(l) = X11_LOCKERS.iter().find(|l| has(l)) {
+            cfg.x11_locker = l.to_string();
+        }
+    }
+    let (name, l) = match d {
+        Desktop::Hyprland => ("hyprland", &cfg.hyprland_locker),
+        Desktop::Sway => ("sway", &cfg.sway_locker),
+        Desktop::X11 => ("x11", &cfg.x11_locker),
+        _ => return cfg,
+    };
+    if !has(l) {
+        p.warnings.push(format!("the locker `{l}` isn't installed, so locking would leave the desktop open (install it, or set another under [{name}] in {}).", tilde(&config::path())));
+    } else if l.starts_with("hyprlock") && ![config::dir().join("hypr/hyprlock.conf"), "/etc/xdg/hypr/hyprlock.conf".into()].iter().any(|f| f.exists()) {
+        p.warnings.push("hyprlock exits at once without ~/.config/hypr/hyprlock.conf, so locking would leave the desktop open (copy /usr/share/hypr/hyprlock.conf there, which Arch ships, or write one).".into());
+    }
+    cfg
+}
+
 /// Hyprland, sway and X11 keep their idle setup in files people write by
 /// hand; setup prints the lines (plugged-in times; glyphwave itself skips
 /// battery when on_battery = no).
@@ -930,6 +957,7 @@ fn setup(desktop: Option<Desktop>, dry: bool) -> i32 {
     };
 
     let mut p = Plan::default();
+    let cfg = check_locker(cfg, d, &mut p);
     p.file(config::path(), cfg.render());
     // the idle timer needs a lasting path: copy a downloaded binary to ~/.local/bin
     let exe = std::env::current_exe().unwrap_or_default();

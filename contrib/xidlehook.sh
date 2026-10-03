@@ -7,6 +7,7 @@
 # No --not-when-fullscreen: the screensaver is itself a fullscreen window, so
 # the lock timer would never fire. --not-when-audio would stop it ever
 # showing the music themes, so it's left off too.
+# Without i3lock, setup puts in Cinnamon's or Xfce's locker instead.
 exec xidlehook \
     --timer 300 'glyphwave launch' '' \
     --timer 600 'glyphwave launch --stop; i3lock -c 000000' ''
