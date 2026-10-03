@@ -154,7 +154,11 @@ impl Extra {
             let mut c = if d == Desktop::Hyprland {
                 let line = cmd.iter().map(|a| launch::quote(a)).collect::<Vec<_>>().join(" ");
                 let mut c = Command::new("hyprctl");
-                c.args(["dispatch", "exec", &format!("[monitor {l}; fullscreen] {line}")]);
+                c.arg("dispatch").arg(if crate::setup::hypr_lua() {
+                    format!("hl.dsp.exec_cmd({line:?}, {{ monitor = {l:?}, fullscreen = true }})")
+                } else {
+                    format!("exec [monitor {l}; fullscreen] {line}")
+                });
                 c
             } else {
                 let mut c = Command::new(&cmd[0]);

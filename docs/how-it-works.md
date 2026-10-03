@@ -182,6 +182,12 @@ Setup uses your desktop's own idle settings (KDE, GNOME, Hyprland, sway, X11)
 rather than running its own timer. On KDE and GNOME it changes them for you;
 on Hyprland, sway and X11 it prints the lines to paste. GNOME has no hook for
 this, so setup adds a small autostart entry that runs `glyphwave idle-watch`.
+The Hyprland lines are Lua when `~/.config/hypr/hyprland.lua` exists (Hyprland
+0.56 on, which then also takes Lua in `hyprctl dispatch`), hyprlang otherwise.
+Hyprland restarts its idle count whenever a window opens, glyphwave's
+included, so hypridle's second timer is `then_after` counted from glyphwave's
+start; it has to be longer than the first, so if `then_after` isn't, it gets
+`start_after` + 1 min and setup says so.
 Music keeps the computer awake the way it always does: players hold off
 sleep while they play, and the desktop's sleep timer takes over once the
 music stops.
@@ -287,7 +293,7 @@ the same moment.
   |---|---|---|
   | KDE, Wayland and X11 | a KWin script, loaded over D-Bus, puts each window by its pid fullscreen on its screen, now and as it opens; it's unloaded when glyphwave ends, and stops placing once the main window closes, so one a crash left loaded does nothing | the primary screen (System Settings > Display) |
   | sway | `swaymsg '[pid=…] move container to output …'` once the window is there | the focused screen (sway has no primary) |
-  | Hyprland | the terminal is started through `hyprctl dispatch exec '[monitor …; fullscreen] …'` | the focused screen |
+  | Hyprland | the terminal is started through `hyprctl dispatch 'hl.dsp.exec_cmd("…", { monitor = "…", fullscreen = true })'`, or `hyprctl dispatch exec '[monitor …; fullscreen] …'` without a hyprland.lua | the focused screen |
   | GNOME, other X11 window managers | can't be done: there's no way for an app to choose the screen | one window, on the screen the desktop picks; the others stay as they are |
 
   Placing by pid needs one process per window, so the launcher starts

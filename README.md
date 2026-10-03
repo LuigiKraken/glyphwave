@@ -50,8 +50,8 @@ More than one screen: with `screens = all` (the default) it runs fullscreen
 on every screen, and with `main` on the main one while the others go black.
 Either way it's one process that records and analyses the music once, and a
 key or the mouse on any screen ends it on all of them. Plugging a screen in
-or out while it runs ends it too. This works on KDE (Wayland and X11), and
-should on sway and Hyprland (untested so far), with any of the terminals
+or out while it runs ends it too. This works on KDE (Wayland and X11) and
+Hyprland, and should on sway (untested so far), with any of the terminals
 below except GNOME Terminal. GNOME
 and other X11 window managers don't let an app choose the screen a window
 opens on, so there it runs on the screen the desktop picks and the others

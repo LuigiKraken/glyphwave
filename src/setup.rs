@@ -708,28 +708,7 @@ fn paste(d: Desktop, cfg: &Config, bin: &Path) -> (&'static str, String) {
     let (start, later) = (t.start * 60, (t.start + t.after) * 60);
     let stop_lock = |l: &str| format!("{b} launch --stop; {l}");
     match d {
-        Desktop::Hyprland => {
-            let l = &cfg.hyprland_locker;
-            let l0 = l.split_whitespace().next().unwrap_or(l);
-            let then = match t.then {
-                Then::Lock => "loginctl lock-session",
-                Then::ScreenOff => "hyprctl dispatch dpms off\n    on-resume = hyprctl dispatch dpms on",
-                Then::Sleep => "systemctl suspend",
-                Then::Nothing => "",
-            };
-            let mut s = format!(
-                "general {{\n    lock_cmd = {b} launch --stop; pidof {l0} || {l}\n    before_sleep_cmd = loginctl lock-session\n}}\n\n\
-                 listener {{\n    timeout = {start}\n    on-timeout = {b} launch\n}}\n"
-            );
-            if !then.is_empty() {
-                s += &format!("\nlistener {{\n    timeout = {later}\n    on-timeout = {then}\n}}\n");
-            }
-            s += "\n# hyprland.conf, for wezterm: windowrulev2 = fullscreen, class:^(glyphwave)$\n";
-            if let Some((mods, k)) = cfg.shortcut.as_deref().map(|k| spell(k, ["SUPER", "CTRL", "ALT", "SHIFT"])) {
-                s += &format!("# hyprland.conf, to start it now: bind = {}, {}, exec, {b} launch --now\n", mods.join(" "), k.to_uppercase());
-            }
-            ("~/.config/hypr/hypridle.conf", s)
-        }
+        Desktop::Hyprland => ("~/.config/hypr/hypridle.conf", hyprland(cfg, bin, hypr_lua())),
         Desktop::Sway => {
             let then = match t.then {
                 Then::Lock => format!("    timeout {later} '{}' \\\n", stop_lock(&cfg.sway_locker)),
@@ -767,6 +746,61 @@ fn paste(d: Desktop, cfg: &Config, bin: &Path) -> (&'static str, String) {
             ("your session autostart (e.g. ~/.xinitrc)", s)
         }
     }
+}
+
+/// Whether Hyprland reads hyprland.lua (0.56 on, which prefers it to
+/// hyprland.conf); `hyprctl dispatch` then takes Lua too.
+pub fn hypr_lua() -> bool {
+    config::dir().join("hypr/hyprland.lua").exists()
+}
+
+/// Minutes from glyphwave opening to hypridle's second timer. Hyprland
+/// restarts the idle count when a window opens, so that timer counts from
+/// there, and it has to outlast the first one or it fires before glyphwave.
+fn hypr_after(t: Times) -> u32 {
+    t.after.max(t.start + 1)
+}
+
+/// The hypridle.conf lines, then those for hyprland.lua (`lua`) or
+/// hyprland.conf.
+fn hyprland(cfg: &Config, bin: &Path, lua: bool) -> String {
+    let (b, t) = (bin.display(), cfg.ac);
+    let l = &cfg.hyprland_locker;
+    let l0 = l.split_whitespace().next().unwrap_or(l);
+    let dpms = |a: &str| if lua { format!("hyprctl dispatch 'hl.dsp.dpms({{ action = \"{a}\" }})'") } else { format!("hyprctl dispatch dpms {a}") };
+    let then = match t.then {
+        Then::Lock => "loginctl lock-session".into(),
+        Then::ScreenOff => format!("{}\n    on-resume = {}", dpms("off"), dpms("on")),
+        Then::Sleep => "systemctl suspend".into(),
+        Then::Nothing => String::new(),
+    };
+    let mut s = format!(
+        "general {{\n    lock_cmd = {b} launch --stop; pidof {l0} || {l}\n    before_sleep_cmd = loginctl lock-session\n}}\n\n\
+         listener {{\n    timeout = {}\n    on-timeout = {b} launch\n}}\n",
+        t.start * 60
+    );
+    if !then.is_empty() {
+        let n = hypr_after(t);
+        s += &format!("\nlistener {{\n    timeout = {}   # {n} min after glyphwave opens: Hyprland restarts the idle count then\n    on-timeout = {then}\n}}\n", n * 60);
+    }
+    let key = cfg.shortcut.as_deref().map(|k| spell(k, ["SUPER", "CTRL", "ALT", "SHIFT"]));
+    let file = if lua { "hyprland.lua" } else { "hyprland.conf" };
+    s += &format!("\nAnd in ~/.config/hypr/{file} (skip the first line if you already start hypridle):\n\n");
+    if lua {
+        s += "hl.on(\"hyprland.start\", function () hl.exec_cmd(\"hypridle\") end)\n";
+        if let Some((mods, k)) = key {
+            let keys: String = mods.iter().map(|m| format!("{m} + ")).collect();
+            s += &format!("hl.bind(\"{keys}{}\", hl.dsp.exec_cmd({:?}))\n", k.to_uppercase(), format!("{b} launch --now"));
+        }
+        s += "-- for wezterm: hl.window_rule({ name = \"glyphwave\", match = { class = \"^glyphwave$\" }, fullscreen = true })\n";
+    } else {
+        s += "exec-once = hypridle\n";
+        if let Some((mods, k)) = key {
+            s += &format!("bind = {}, {}, exec, {b} launch --now\n", mods.join(" "), k.to_uppercase());
+        }
+        s += "# for wezterm: windowrule = fullscreen on, match:class ^(glyphwave)$\n# (before Hyprland 0.53: windowrulev2 = fullscreen, class:^(glyphwave)$)\n";
+    }
+    s
 }
 
 /// Whether waking from sleep shows the lock screen: KDE's and GNOME's own
@@ -950,6 +984,9 @@ fn setup(desktop: Option<Desktop>, dry: bool) -> i32 {
         }
         _ => pasted = Some(paste(d, &cfg, &bin)),
     }
+    if d == Desktop::Hyprland && cfg.ac.then != Then::Nothing && hypr_after(cfg.ac) != cfg.ac.after {
+        p.notes.push(format!("On Hyprland it runs {} min: hypridle's timers restart when glyphwave opens, and the second has to be longer than the first.", hypr_after(cfg.ac)));
+    }
     // the timeline says the rest; only a lock_after that can't happen needs a word
     if let Some(m) = cfg.lock_after.filter(|&m| m > 0) {
         let then = [cfg.ac, cfg.bat()].into_iter().filter(|t| t.then == Then::Lock).map(|t| t.after).min();
@@ -1124,6 +1161,25 @@ mod tests {
         assert_eq!(spell("shift+Super+v", gnome), spell("Meta+Shift+V", gnome));
         assert_ne!(spell("Meta+V", gnome), spell("Meta+Shift+V", gnome));
         assert_eq!(spell("Ctrl+Alt+F12", gnome), (vec!["<Control>", "<Alt>"], "F12".to_string()));
+    }
+
+    #[test]
+    fn hyprland_lines_for_lua_and_hyprlang() {
+        let c = Config { ac: Times { start: 1, then: Then::ScreenOff, after: 2 }, shortcut: Some("Meta+Ctrl+L".into()), ..Config::default() };
+        let bin = Path::new("/home/a/.local/bin/glyphwave");
+        let lua = hyprland(&c, bin, true);
+        assert!(lua.contains("timeout = 120   # 2 min after glyphwave opens"));
+        assert!(lua.contains("on-timeout = hyprctl dispatch 'hl.dsp.dpms({ action = \"off\" })'\n    on-resume = hyprctl dispatch 'hl.dsp.dpms({ action = \"on\" })'"));
+        assert!(lua.contains("\nhl.on(\"hyprland.start\", function () hl.exec_cmd(\"hypridle\") end)\n"));
+        assert!(lua.contains("\nhl.bind(\"SUPER + CTRL + L\", hl.dsp.exec_cmd(\"/home/a/.local/bin/glyphwave launch --now\"))\n"));
+        assert!(!lua.contains("bind =") && !lua.contains("exec-once"));
+        let conf = hyprland(&c, bin, false);
+        assert!(conf.contains("on-timeout = hyprctl dispatch dpms off\n    on-resume = hyprctl dispatch dpms on"));
+        assert!(conf.contains("\nexec-once = hypridle\nbind = SUPER CTRL, L, exec, /home/a/.local/bin/glyphwave launch --now\n"));
+        assert!(!conf.contains("hl."));
+        // the second timer has to outlast the first
+        let c = Config { ac: Times { start: 5, then: Then::Lock, after: 2 }, ..c };
+        assert!(hyprland(&c, bin, false).contains("timeout = 360   # 6 min after"));
     }
 
     #[test]
