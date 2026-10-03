@@ -843,9 +843,9 @@ fn hyprland(cfg: &Config, bin: &Path, lua: bool) -> String {
 fn x11_desktop() -> (bool, (&'static str, &'static str)) {
     let de = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().to_ascii_lowercase();
     if de.contains("cinnamon") {
-        (true, ("Startup Applications (+, Custom command; it starts at the next login)", "Keyboard > Shortcuts > Custom Shortcuts"))
+        (true, ("Startup Applications (~/.config/autostart)", "Keyboard > Shortcuts > Custom Shortcuts"))
     } else if de.contains("xfce") {
-        (true, ("Session and Startup > Application Autostart (+ Add; it starts at the next login)", "Keyboard > Application Shortcuts"))
+        (true, ("Session and Startup > Application Autostart (~/.config/autostart)", "Keyboard > Application Shortcuts"))
     } else {
         (false, ("your session autostart (e.g. ~/.xinitrc)", ""))
     }
@@ -1142,7 +1142,7 @@ fn undo(desktop: Option<Desktop>, dry: bool) -> i32 {
     let pasted = d.zip(config::load()).map(|(d, c)| paste(d, &check_locker(c, d, &mut Plan::default()), &lasting_bin().1));
     let left = || {
         if let Some((file, text)) = &pasted {
-            println!("\nSetup didn't write these; delete them from {file} yourself:\n\n{text}");
+            println!("\nSetup didn't write these, so delete them from {file} yourself; what runs now keeps them until you log in again:\n\n{text}");
         }
     };
     println!("Remove will:");
