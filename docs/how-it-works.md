@@ -180,7 +180,9 @@ hooks in, and the research it builds on.
 
 Setup uses your desktop's own idle settings (KDE, GNOME, Hyprland, sway, X11)
 rather than running its own timer. On KDE and GNOME it changes them for you;
-on Hyprland, sway and X11 it prints the lines to paste. GNOME has no hook for
+on Hyprland, sway and X11 it prints the lines to paste (on Cinnamon and Xfce,
+told by `XDG_CURRENT_DESKTOP`, with where they go in the desktop's settings),
+and `--remove` prints them again to delete. GNOME has no hook for
 this, so setup adds a small autostart entry that runs `glyphwave idle-watch`.
 The Hyprland lines are Lua when `~/.config/hypr/hyprland.lua` exists (Hyprland
 0.56 on, which then also takes Lua in `hyprctl dispatch`), hyprlang otherwise.

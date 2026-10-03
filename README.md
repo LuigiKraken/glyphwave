@@ -39,6 +39,17 @@ mouse and it's gone.
    only writes to your home folder. To uninstall, run that and delete
    `~/.local/bin/glyphwave`.
 
+On Hyprland, sway and X11, setup prints the lines to add to your idle
+setup, and `setup --remove` prints them again for you to delete. On X11
+that's an xidlehook command: on Cinnamon it goes in Startup Applications,
+on Xfce in Session and Startup > Application Autostart, and the start-now
+key in Keyboard > Shortcuts > Custom Shortcuts (Cinnamon) or Keyboard >
+Application Shortcuts (Xfce). xidlehook isn't packaged on Debian, Ubuntu or
+Mint; build it (`--locked` makes it build with Mint's older Rust):
+
+    sudo apt install cargo pkg-config libxcb1-dev libxcb-screensaver0-dev libxss-dev libx11-dev libpulse-dev
+    cargo install --locked xidlehook
+
 To update, run the command from step 1 again. It replaces the binary and
 leaves your settings alone. Run `glyphwave setup` again only if a release
 says it added a question.
@@ -115,7 +126,8 @@ put in `~/.config/glyphwave/banner.txt`. The GIF above uses a banner file.
   WezTerm, Konsole, Ptyxis, GNOME Terminal or xterm.
 - `parec` and `pactl` for the music (in `pulseaudio-utils`, `libpulse` on
   Arch), which desktops with PipeWire or PulseAudio normally have.
-  `pw-record` works in place of `parec`.
+  `pw-record` works in place of `parec`. Without `pactl` it doesn't notice
+  a muted output, and records the default output rather than the player's.
 - A player that reports what it plays over MPRIS. Firefox only does while
   `media.hardwaremediakeys.enabled` is on in about:config. That's the
   default, but hardened profiles sometimes turn it off, and then glyphwave
