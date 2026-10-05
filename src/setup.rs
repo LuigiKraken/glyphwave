@@ -820,7 +820,7 @@ fn hyprland(cfg: &Config, bin: &Path, lua: bool) -> String {
     }
     let key = cfg.shortcut.as_deref().map(|k| spell(k, ["SUPER", "CTRL", "ALT", "SHIFT"]));
     let file = if lua { "hyprland.lua" } else { "hyprland.conf" };
-    s += &format!("\nAnd in ~/.config/hypr/{file} (skip the first line if you already start hypridle):\n\n");
+    s += &format!("\nAnd in ~/.config/hypr/{file} (the first line starts hypridle, for when nothing else does):\n\n");
     if lua {
         s += "hl.on(\"hyprland.start\", function () hl.exec_cmd(\"hypridle\") end)\n";
         if let Some((mods, k)) = key {
