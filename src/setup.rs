@@ -762,15 +762,23 @@ fn paste(d: Desktop, cfg: &Config, bin: &Path) -> (&'static str, String) {
                 Then::Sleep => format!("{}; systemctl suspend", stop_lock(&cfg.x11_locker)),
                 Then::Nothing => String::new(),
             };
-            let mut s = format!("xidlehook --timer {start} '{b} launch' ''");
+            // a desktop's autostart takes one line, and its PATH lacks ~/.cargo/bin
+            let (de, (file, keys)) = x11_desktop();
+            let mut s = format!("{} --timer {start} '{b} launch' ''", xidlehook().display());
             if !then.is_empty() {
-                s += &format!(" \\\n    --timer {} '{then}' ''", later - start);
+                s += &format!("{} --timer {} '{then}' ''", if de { "" } else { " \\\n   " }, later - start);
             }
             s += "\n";
-            if let Some((mods, k)) = cfg.shortcut.as_deref().map(|k| spell(k, ["super", "ctrl", "alt", "shift"])) {
-                s += &format!("\n# to start it now, bind `{b} launch --now` to a key in your WM, or in sxhkdrc:\n# {} + {k}\n#     {b} launch --now\n", mods.join(" + "));
+            if let Some(key) = cfg.shortcut.as_deref() {
+                if de {
+                    let (mods, k) = spell(key, ["Super", "Ctrl", "Alt", "Shift"]);
+                    s += &format!("\n# the start-now key, in {keys}: command `{b} launch --now`, key {}+{}\n", mods.join("+"), k.to_uppercase());
+                } else {
+                    let (mods, k) = spell(key, ["super", "ctrl", "alt", "shift"]);
+                    s += &format!("\n# to start it now, bind `{b} launch --now` to a key in your WM, or in sxhkdrc:\n# {} + {k}\n#     {b} launch --now\n", mods.join(" + "));
+                }
             }
-            ("your session autostart (e.g. ~/.xinitrc)", s)
+            (file, s)
         }
     }
 }
@@ -828,6 +836,26 @@ fn hyprland(cfg: &Config, bin: &Path, lua: bool) -> String {
         s += "# for wezterm: windowrule = fullscreen on, match:class ^(glyphwave)$\n# (before Hyprland 0.53: windowrulev2 = fullscreen, class:^(glyphwave)$)\n";
     }
     s
+}
+
+/// Cinnamon and Xfce: where their autostart and custom keys are set (true),
+/// or a plain window manager's (false).
+fn x11_desktop() -> (bool, (&'static str, &'static str)) {
+    let de = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().to_ascii_lowercase();
+    if de.contains("cinnamon") {
+        (true, ("Startup Applications (~/.config/autostart)", "Keyboard > Shortcuts > Custom Shortcuts"))
+    } else if de.contains("xfce") {
+        (true, ("Session and Startup > Application Autostart (~/.config/autostart)", "Keyboard > Application Shortcuts"))
+    } else {
+        (false, ("your session autostart (e.g. ~/.xinitrc)", ""))
+    }
+}
+
+/// xidlehook from PATH, else where `cargo install` puts it: Debian, Ubuntu
+/// and Mint don't package it.
+fn xidlehook() -> PathBuf {
+    let cargo = home().join(".cargo/bin/xidlehook");
+    if cargo.exists() || !launch::installed("xidlehook") { cargo } else { "xidlehook".into() }
 }
 
 /// Whether waking from sleep shows the lock screen: KDE's and GNOME's own
@@ -972,7 +1000,16 @@ pub fn run(args: &[String]) -> i32 {
         eprintln!("glyphwave: run setup as yourself, with HOME set; it only changes your home folder.");
         return 1;
     }
-    if has("--remove") { undo(has("--dry-run")) } else { setup(desktop.flatten(), has("--dry-run")) }
+    if has("--remove") { undo(desktop.flatten(), has("--dry-run")) } else { setup(desktop.flatten(), has("--dry-run")) }
+}
+
+/// This binary, and the path the idle timer runs: the idle timer needs a
+/// lasting one, so a downloaded binary is copied to ~/.local/bin.
+fn lasting_bin() -> (PathBuf, PathBuf) {
+    let exe = std::env::current_exe().unwrap_or_default();
+    let on_path = exe.parent().is_some_and(|d| std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).any(|p| p == d));
+    let bin = if on_path { exe.clone() } else { home().join(".local/bin/glyphwave") };
+    (exe, bin)
 }
 
 fn setup(desktop: Option<Desktop>, dry: bool) -> i32 {
@@ -993,10 +1030,7 @@ fn setup(desktop: Option<Desktop>, dry: bool) -> i32 {
     let mut p = Plan::default();
     let cfg = check_locker(cfg, d, &mut p);
     p.file(config::path(), cfg.render());
-    // the idle timer needs a lasting path: copy a downloaded binary to ~/.local/bin
-    let exe = std::env::current_exe().unwrap_or_default();
-    let on_path = exe.parent().is_some_and(|d| std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).any(|p| p == d));
-    let bin = if on_path { exe.clone() } else { home().join(".local/bin/glyphwave") };
+    let (exe, bin) = lasting_bin();
     if bin != exe {
         p.file(bin.clone(), std::fs::read(&exe).unwrap_or_default());
     }
@@ -1077,11 +1111,19 @@ fn setup(desktop: Option<Desktop>, dry: bool) -> i32 {
         }
     }
     if let Some((file, text)) = pasted {
-        println!("\nAdd these lines to {file}:\n\n{text}");
+        println!("\nAdd this to {file}:\n\n{text}");
+    }
+    if d == Desktop::X11 && !xidlehook().exists() && !launch::installed("xidlehook") {
+        println!("xidlehook isn't packaged on Debian, Ubuntu or Mint; build it into ~/.cargo/bin, where the line above looks for it:");
+        println!("  sudo apt install cargo pkg-config libxcb1-dev libxcb-screensaver0-dev libxss-dev libx11-dev libpulse-dev");
+        println!("  cargo install --locked xidlehook\n");
     }
     p.notes.iter().for_each(|n| println!("{n}"));
-    if !launch::installed("parec") {
-        println!("For the music visuals, install parec (pulseaudio-utils, or libpulse on Arch).");
+    // parec or pw-record records; pactl finds the player's output and its mute
+    let records = launch::installed("parec") || launch::installed("pw-record");
+    if !records || !launch::installed("pactl") {
+        let why = if records { "so glyphwave notices a muted output and records the one the player plays to" } else { "for the music visuals" };
+        println!("Install pulseaudio-utils (libpulse on Arch) {why}.");
     }
     if cfg.banner.as_deref() == Some("logo") && !launch::installed("fastfetch") && !launch::installed("neofetch") {
         println!("Optional: with fastfetch installed, the banner shows your system's logo.");
@@ -1089,12 +1131,20 @@ fn setup(desktop: Option<Desktop>, dry: bool) -> i32 {
     0
 }
 
-fn undo(dry: bool) -> i32 {
+fn undo(desktop: Option<Desktop>, dry: bool) -> i32 {
     let m = Manifest::load();
     if m.entries.is_empty() {
         println!("Nothing to remove: setup hasn't changed anything.");
         return 0;
     }
+    // the lines setup printed, from the config before it goes; the user pasted them
+    let d = desktop.or_else(detect).filter(|d| ![Desktop::Kde, Desktop::Gnome].contains(d));
+    let pasted = d.zip(config::load()).map(|(d, c)| paste(d, &check_locker(c, d, &mut Plan::default()), &lasting_bin().1));
+    let left = || {
+        if let Some((file, text)) = &pasted {
+            println!("\nSetup didn't write these, so delete them from {file} yourself; what runs now keeps them until you log in again:\n\n{text}");
+        }
+    };
     println!("Remove will:");
     for e in &m.entries {
         match e {
@@ -1107,6 +1157,9 @@ fn undo(dry: bool) -> i32 {
     println!("  delete {}", tilde(&m.dir));
     if dry || !ask_yes("Go ahead?") {
         println!("Nothing changed.");
+        if dry {
+            left();
+        }
         return i32::from(!dry);
     }
     let menu = std::fs::read_to_string(data_dir().join("applications/glyphwave.desktop")).unwrap_or_default();
@@ -1140,6 +1193,7 @@ fn undo(dry: bool) -> i32 {
         sycoca(); // KDE lets go of the key
     }
     println!("Done.");
+    left();
     0
 }
 

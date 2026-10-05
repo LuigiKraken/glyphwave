@@ -1,6 +1,8 @@
 #!/bin/sh
-# X11 window managers (i3, bspwm, openbox, …): start from your session
-# autostart. `glyphwave setup` prints this with your times filled in.
+# X11 (i3, bspwm, openbox, Cinnamon, Xfce, …): start from your session
+# autostart (Cinnamon: Startup Applications; Xfce: Session and Startup), as
+# one line there. `glyphwave setup` prints this with your times filled in.
+# Not packaged on Debian, Ubuntu or Mint: `cargo install --locked xidlehook`.
 # xidlehook's timers count from the one before: lock 10 min after the start.
 # With more than one screen it runs on one of them: an X11 window manager
 # gives no way to choose which.
