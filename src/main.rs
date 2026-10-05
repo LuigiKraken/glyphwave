@@ -333,6 +333,7 @@ fn main() {
     let mut input = Vec::new();
     // swallows the launch keypress, and whatever a window that just opened sends
     let mut grace = if o.screensaver { 0.5 } else { 0.0 };
+    let mut pointer = None; // the cell of a mouse-motion report that came while it settled
     let mut fds: Vec<i32> = Vec::new();
     let (mut frames, mut bytes, mut busy) = (0u64, 0u64, Duration::ZERO);
 
@@ -381,7 +382,7 @@ fn main() {
                 if o.screensaver {
                     if t <= grace {
                         input.clear(); // swallow the launch keypress
-                    } else if ringing || term::wakes(&input) {
+                    } else if ringing || term::wakes(&input, &mut pointer, t <= grace + 2.5) {
                         dismissed = true;
                         break 'main;
                     }

@@ -123,11 +123,21 @@ pub fn is_media(b: u8) -> bool {
 /// Whether screensaver input should wake the screen. Everything does except
 /// the music keys and function keys: the media keys live on them, and with
 /// Fn-lock the other way round a press arrives as F1–F12 instead of reaching
-/// the desktop.
-pub fn wakes(mut b: &[u8]) -> bool {
+/// the desktop. Mouse motion wakes unless it's in the cell of a report that
+/// came while `settling`, kept in `pointer`: Ptyxis reports one motion where
+/// the pointer stands soon after its window goes fullscreen, with no movement.
+pub fn wakes(mut b: &[u8], pointer: &mut Option<(u16, u16)>, settling: bool) -> bool {
     while !b.is_empty() {
         if is_media(b[0]) {
             b = &b[1..];
+            continue;
+        }
+        if let Some((n, cell)) = motion(b) {
+            if *pointer != Some(cell) && !(settling && pointer.is_none()) {
+                return true;
+            }
+            *pointer = Some(cell);
+            b = &b[n..];
             continue;
         }
         match fkey_len(b) {
@@ -136,6 +146,17 @@ pub fn wakes(mut b: &[u8]) -> bool {
         }
     }
     false
+}
+
+/// An SGR mouse-motion report at the start of `b` (ESC [ < button;col;row M
+/// with the motion bit, 32, in the button): its length and cell. Clicks and
+/// the wheel aren't motion.
+fn motion(b: &[u8]) -> Option<(usize, (u16, u16))> {
+    let rest = b.strip_prefix(b"\x1b[<")?;
+    let end = rest.iter().position(|&c| !(c.is_ascii_digit() || c == b';'))?;
+    let mut f = std::str::from_utf8(&rest[..end]).ok()?.split(';').map(|n| n.parse::<u16>().ok());
+    let (btn, col, row) = (f.next()??, f.next()??, f.next()??);
+    (rest[end] == b'M' && btn & 32 != 0 && btn & 64 == 0).then_some((end + 4, (col, row)))
 }
 
 /// Length of the function-key sequence at the start of `b`, if there is one:
@@ -221,14 +242,33 @@ mod tests {
     #[test]
     fn function_and_music_keys_do_not_wake() {
         for k in [&b"-"[..], b"+", b"\r", b"+\r-", b"\x1bOP", b"\x1bOS", b"\x1b[1;2Q", b"\x1b[15~", b"\x1b[24;5~", b"\x1b[11~", b"\x1b[[A", b"\x1bOP\x1b[17~"] {
-            assert!(!wakes(k), "{k:?}");
+            assert!(!wakes(k, &mut None, false), "{k:?}");
         }
     }
 
     #[test]
     fn everything_else_wakes() {
-        for k in [&b"a"[..], b" ", b"\x1b", b"\x03", b"\x1b[A", b"\x1b[3~", b"\x1b[5~", b"\x1b[<35;10;4M", b"\x1b[15~x", b"-a", b"="] {
-            assert!(wakes(k), "{k:?}");
+        let clicks = [&b"\x1b[<0;10;4M"[..], b"\x1b[<0;10;4m", b"\x1b[<64;10;4M", b"\x1b[<65;10;4M", b"\x1b[<35;10;4M\x1b[<0;10;4M"];
+        for k in [&b"a"[..], b" ", b"\x1b", b"\x03", b"\x1b[A", b"\x1b[3~", b"\x1b[5~", b"\x1b[15~x", b"-a", b"="].into_iter().chain(clicks) {
+            assert!(wakes(k, &mut None, false), "{k:?}");
         }
+    }
+
+    #[test]
+    fn motion_wakes_once_the_pointer_moves() {
+        // Ptyxis: one report where the pointer already stands, soon after it opens
+        let mut p = None;
+        assert!(!wakes(b"\x1b[<35;80;22M", &mut p, true));
+        assert!(!wakes(b"\x1b[<35;80;22M", &mut p, false));
+        assert!(wakes(b"\x1b[<35;81;22M", &mut p, false));
+        // a move while it settles reports more than one cell
+        assert!(wakes(b"\x1b[<35;10;4M\x1b[<35;11;4M", &mut None, true));
+        let mut p = None;
+        assert!(!wakes(b"\x1b[<35;10;4M", &mut p, true));
+        assert!(wakes(b"\x1b[<35;10;5M", &mut p, true));
+        // after that, one report is enough (Konsole sends one per pointer jump)
+        assert!(wakes(b"\x1b[<35;10;4M", &mut None, false));
+        // a motion and a key
+        assert!(wakes(b"\x1b[<35;10;4Mx", &mut None, true));
     }
 }

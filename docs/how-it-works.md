@@ -286,7 +286,11 @@ the same moment.
   it runs ends it as well (it checks the connectors in
   `/sys/class/drm` every 2 s): someone is at the machine, and the desktop
   may have moved a window onto another screen. All of these count as waking
-  it, so `lock_after` applies.
+  it, so `lock_after` applies. A mouse motion the terminal reports in the
+  first 3 s (after a new window opens on another screen too) only marks
+  where the pointer stands: Ptyxis reports one soon after its window goes
+  fullscreen, though nothing moved. Motion anywhere else ends it, as do
+  clicks and the wheel.
 - **No strays.** A stub waits on a lock the main process holds, so when the
   main process ends, however it ends (`launch --stop`, a crash, `kill -9`),
   every stub exits and its window closes. `launch --stop` stops the stubs
