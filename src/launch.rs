@@ -81,6 +81,10 @@ pub fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
+fn konsole_has(option: &str) -> bool {
+    Command::new("konsole").arg("--help").output().is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains(option))
+}
+
 /// The terminal's command line, fullscreen and black, running `run`. Each
 /// window gets a process of its own (konsole --separate, wezterm
 /// --always-new-process, ghostty without single-instance), so a window's pid
@@ -118,8 +122,12 @@ pub fn command(term: &str, cfg: &Config, run: &[&str]) -> Option<Vec<String>> {
                 Some(p) => c.extend(["--profile".to_string(), p.clone()]),
                 None => c.extend(["-p", "ColorScheme=WhiteOnBlack"].map(String::from)),
             }
-            let rest = ["--fullscreen", "--hide-menubar", "--hide-toolbars", "--hide-tabbar", "--notransparency", "-e"];
-            c.extend(rest.iter().chain(run).map(|s| s.to_string()));
+            c.extend(["--fullscreen", "--hide-menubar", "--hide-tabbar"].map(String::from));
+            // newer Konsole only; 25.12 exits on an unknown option
+            if konsole_has("--hide-toolbars") {
+                c.push("--hide-toolbars".into());
+            }
+            c.extend(["--notransparency", "-e"].iter().chain(run).map(|s| s.to_string()));
             c
         }
         // standalone, so the process lives as long as the window and holds the lock
@@ -321,7 +329,7 @@ mod tests {
     #[test]
     fn konsole_black_only_without_a_profile() {
         let c = command("konsole", &Config::default(), &["gw", "--screensaver"]).unwrap().join(" ");
-        assert!(c.starts_with("konsole --separate -p ScrollBarPosition=2 -p TerminalMargin=1 -p ColorScheme=WhiteOnBlack --fullscreen --hide-menubar --hide-toolbars --hide-tabbar"), "{c}");
+        assert!(c.starts_with("konsole --separate -p ScrollBarPosition=2 -p TerminalMargin=1 -p ColorScheme=WhiteOnBlack --fullscreen --hide-menubar --hide-tabbar"), "{c}");
         let cfg = Config { konsole_profile: Some("Mine".into()), ..Config::default() };
         let c = command("konsole", &cfg, &["gw", "--screensaver"]).unwrap().join(" ");
         assert!(c.contains("-p TerminalMargin=1 --profile Mine --fullscreen") && !c.contains("ColorScheme"), "{c}");
